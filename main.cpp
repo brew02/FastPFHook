@@ -10,6 +10,8 @@
 #define PAGE_ALIGN(address) (UINT_PTR)(address) & (~0xFFFllu)
 #define INITIAL_HOOK_SIZE 2 * PAGE_SIZE
 #define JMP_SIZE_32 5
+#define JMP_SIZE_ABS 14
+#define MANUAL_RET_SIZE 13
 
 #define GP_REGISTER_COUNT (ZYDIS_REGISTER_R15 - ZYDIS_REGISTER_RAX) + 1
 
@@ -43,12 +45,44 @@ long __stdcall ExceptionHandler(EXCEPTION_POINTERS* exceptionInfo)
 	return EXCEPTION_CONTINUE_SEARCH;
 }
 
-void PlaceRelativeJump(void* destination, UINT32 offset)
+void PlaceRelativeJump(void* destination, INT32 offset)
 {
+	// jmp offset
 	UINT8 instruction[JMP_SIZE_32] = { 0xE9, 0x00, 0x00, 0x00, 0x00 };
-	*(UINT32*)(&instruction[1]) = offset;
+	*(INT32*)(&instruction[1]) = offset;
 
 	memcpy(destination, instruction, JMP_SIZE_32);
+}
+
+void PlaceAbsoluteJump(void* destination, UINT64 address)
+{
+	// jmp [rip]
+	// rip -> address
+	UINT8 instruction[JMP_SIZE_ABS] = 
+	{ 
+		0xFF, 0x25, 0x00, 0x00, 0x00, 0x00, 0x00, 
+		0x00, 0x00, 0x00 , 0x00, 0x00, 0x00, 0x00 
+	};
+
+	*(UINT64*)(&instruction[6]) = address;
+
+	memcpy(destination, instruction, JMP_SIZE_ABS);
+}
+
+void PlaceManualReturnAddress(void* destination, UINT64 returnAddress)
+{
+	UINT8* target = (UINT8*)destination;
+
+	// push lower half
+	target[0] = 0x68;
+	*(UINT32*)(&target[1]) = (UINT32)returnAddress;
+
+	// mov dword ptr [rsp + 4], upper half of address
+	target[5] = 0xc7;
+	target[6] = 0x44;
+	target[7] = 0x24;
+	target[8] = 0x04;
+	*(UINT32*)(&target[9]) = (UINT32)(returnAddress >> 32);
 }
 
 // Credits to btbd (SMAP)
@@ -105,13 +139,28 @@ ZydisRegister GetUnusedGPRegister(ZydisDecodedInstruction* instruction, ZydisDec
 	return ZYDIS_REGISTER_INVALID;
 }
 
-bool PlaceAbsoluteInstruction(UINT8** relocationCursor, ZydisRegister reg, UINT64 rip,
+ZyanStatus PlaceAbsoluteInstruction(UINT8** relocationCursor, ZydisRegister reg, UINT64 rip,
 	ZydisDecodedInstruction* instruction, ZydisDecodedOperand* operands)
 {
 	UINT8 buffer[ZYDIS_MAX_INSTRUCTION_LENGTH];
-	ZyanUSize length = 0;
+	ZyanUSize length = sizeof(buffer);
+	ZyanStatus status = 0;
 	ZydisEncoderRequest request;
 	ZeroMemory(&request, sizeof(request));
+
+	if (instruction->meta.branch_type != ZYDIS_BRANCH_TYPE_NONE)
+	{
+		if (instruction->meta.category == ZYDIS_CATEGORY_CALL)
+		{
+			PlaceManualReturnAddress(*relocationCursor, (UINT64)(*relocationCursor + MANUAL_RET_SIZE + JMP_SIZE_ABS));
+			*relocationCursor += MANUAL_RET_SIZE;
+		}
+
+		PlaceAbsoluteJump(*relocationCursor, rip + operands[0].imm.value.u);
+		*relocationCursor += JMP_SIZE_ABS;
+
+		return true;
+	}
 
 	request.mnemonic = ZYDIS_MNEMONIC_PUSH;
 	request.machine_mode = instruction->machine_mode;
@@ -119,13 +168,14 @@ bool PlaceAbsoluteInstruction(UINT8** relocationCursor, ZydisRegister reg, UINT6
 	request.operands[0].type = ZYDIS_OPERAND_TYPE_REGISTER;
 	request.operands[0].reg.value = reg;
 
-	if (ZYAN_FAILED(ZydisEncoderEncodeInstruction(&request, buffer, &length)))
-		return false;
+	status = ZydisEncoderEncodeInstruction(&request, buffer, &length);
+	if (ZYAN_FAILED(status))
+		return status;
 
 	memcpy(*relocationCursor, buffer, length);
 	*relocationCursor += length;
 
-	length = 0;
+	length = sizeof(buffer);
 	ZeroMemory(&request, sizeof(request));
 	request.mnemonic = ZYDIS_MNEMONIC_MOV;
 	request.machine_mode = instruction->machine_mode;
@@ -135,13 +185,14 @@ bool PlaceAbsoluteInstruction(UINT8** relocationCursor, ZydisRegister reg, UINT6
 	request.operands[1].type = ZYDIS_OPERAND_TYPE_IMMEDIATE;
 	request.operands[1].imm.u = rip;
 
-	if (ZYAN_FAILED(ZydisEncoderEncodeInstruction(&request, buffer, &length)))
-		return false;
+	status = ZydisEncoderEncodeInstruction(&request, buffer, &length);
+	if (ZYAN_FAILED(status))
+		return status;
 
 	memcpy(*relocationCursor, buffer, length);
 	*relocationCursor += length;
 
-	length = 0;
+	length = sizeof(buffer);
 	ZeroMemory(&request, sizeof(request));
 	if (ZYAN_FAILED(ZydisEncoderDecodedInstructionToEncoderRequest(instruction, operands, instruction->operand_count_visible, &request)))
 		return false;
@@ -159,25 +210,32 @@ bool PlaceAbsoluteInstruction(UINT8** relocationCursor, ZydisRegister reg, UINT6
 		if (operand->type == ZYDIS_OPERAND_TYPE_IMMEDIATE
 			&& request.branch_type != ZYDIS_BRANCH_TYPE_NONE)
 		{
-			operand->type = ZYDIS_OPERAND_TYPE_MEMORY;
+			// We don't need any of this (including the push, mov, pop)
+			// for absolute jumps
+
+			// We will also need to perform checks to see if the location
+			// lands within or outside our page
+
+			/*operand->type = ZYDIS_OPERAND_TYPE_MEMORY;
 			operand->mem.base = reg;
 			operand->mem.displacement = operand->imm.s;
 			operand->imm.s = 0;
 			operand->mem.size = 8;
 
 			request.branch_type = ZYDIS_BRANCH_TYPE_NONE;
-			request.branch_width = ZYDIS_BRANCH_WIDTH_NONE;
+			request.branch_width = ZYDIS_BRANCH_WIDTH_NONE;*/
 			break;
 		}
 	}
 
-	if (ZYAN_FAILED(ZydisEncoderEncodeInstruction(&request, buffer, &length)))
-		return false;
+	status = ZydisEncoderEncodeInstruction(&request, buffer, &length);
+	if (ZYAN_FAILED(status))
+		return status;
 
 	memcpy(*relocationCursor, buffer, length);
 	*relocationCursor += length;
 
-	length = 0;
+	length = sizeof(buffer);
 	ZeroMemory(&request, sizeof(request));
 
 	request.mnemonic = ZYDIS_MNEMONIC_POP;
@@ -186,14 +244,18 @@ bool PlaceAbsoluteInstruction(UINT8** relocationCursor, ZydisRegister reg, UINT6
 	request.operands[0].type = ZYDIS_OPERAND_TYPE_REGISTER;
 	request.operands[0].reg.value = reg;
 
-	if (ZYAN_FAILED(ZydisEncoderEncodeInstruction(&request, buffer, &length)))
-		return false;
+	status = ZydisEncoderEncodeInstruction(&request, buffer, &length);
+	if (ZYAN_FAILED(status))
+		return status;
 
 	memcpy(*relocationCursor, buffer, length);
 	*relocationCursor += length;
 
 	return true;
 }
+
+// Need to add extending capabilities for when relocationCursor crosses outside
+// of the modifiedPage boundaries.
 
 bool TranslateRelativeInstruction(HookData* hookData, UINT64 currentOffset,
 	ZydisDecodedInstruction* instruction, ZydisDecodedOperand* operands)
@@ -203,7 +265,7 @@ bool TranslateRelativeInstruction(HookData* hookData, UINT64 currentOffset,
 	UINT8* currentModifiedAddress = hookData->modifiedPagesStart + currentOffset;
 	UINT8* nextModifiedAddress = currentModifiedAddress + instruction->length;
 
-	UINT32 relocationRVA = (UINT32)(hookData->relocationCursor - nextModifiedAddress);
+	UINT32 relocationRVA = (UINT32)(hookData->relocationCursor - (currentModifiedAddress + JMP_SIZE_32));
 	// Care must be taken for relative unconditional branches as well
 	// Certain branches of this variety in obfuscated code will branch
 	// between instruction boundaries. 
@@ -218,15 +280,23 @@ bool TranslateRelativeInstruction(HookData* hookData, UINT64 currentOffset,
 	}
 	else
 	{
-		// Maybe replace with proper NOP slide
+		// Replace with proper NOP slide
 		memset(currentModifiedAddress, 0x90, instruction->length);
 
-		PlaceRelativeJump(nextModifiedAddress, relocationRVA);
+		PlaceRelativeJump(currentModifiedAddress, (INT32)relocationRVA);
 		ZydisRegister reg = GetUnusedGPRegister(instruction, operands);
 		if (reg == ZYDIS_REGISTER_INVALID)
 			return false;
 
+		ZyanStatus status = PlaceAbsoluteInstruction(&hookData->relocationCursor, reg, (UINT64)currentOriginalAddress + instruction->length, instruction, operands);
+		if (ZYAN_FAILED(status))
+		{
+			printf("Failed to place absolute instruction: 0x%lx\n", ZYAN_STATUS_CODE(status));
+			return false;
+		}
 
+		PlaceRelativeJump(hookData->relocationCursor, (INT32)(nextModifiedAddress - (hookData->relocationCursor + JMP_SIZE_32)));
+		hookData->relocationCursor += JMP_SIZE_32;
 		// NOP length of instruction at modifiedPage offset
 		// Create a jmp to relocationCursor
 		// Fix the instruction and place the instruction at relocation cursor
@@ -263,9 +333,8 @@ bool ParseAndTranslate(HookData* hookData)
 		return false;
 	}
 
-
 	for (UINT64 currentAddress = (UINT64)hookData->hookAddress,
-		currentOffset = (currentAddress - PAGE_ALIGN(currentAddress));
+		currentOffset = (currentAddress - (UINT64)(hookData->hookPage));
 		(currentOffset >= 0) && (currentOffset < PAGE_SIZE);
 		currentAddress += instruction.length,
 		currentOffset += instruction.length)
@@ -287,77 +356,26 @@ bool ParseAndTranslate(HookData* hookData)
 		// We could put breakpoints on the jccs
 		// We can find out if an instruction jumps between a boundary by checking if the
 		// disassembled instructions are equal to each other and it is NOT one of our jmps
-		if (instruction.meta.category == ZYDIS_CATEGORY_COND_BR)
-			continue;
+		/*if (instruction.meta.category == ZYDIS_CATEGORY_COND_BR)
+			continue;*/
 
-		if (instruction.attributes & ZYDIS_ATTRIB_IS_RELATIVE)
+		if (instruction.attributes & ZYDIS_ATTRIB_IS_RELATIVE && instruction.meta.category != ZYDIS_CATEGORY_COND_BR)
 		{
-			char buffer[256];
-			if (ZYAN_FAILED(ZydisFormatterFormatInstruction(&formatter, &instruction,
-				operands, instruction.operand_count_visible, buffer, sizeof(buffer),
-				ZYDIS_RUNTIME_ADDRESS_NONE, ZYAN_NULL)))
-			{
-				continue;
-			}
+			if (!TranslateRelativeInstruction(hookData, currentOffset, &instruction, operands))
+				return false;
 
-			printf("%s\n", buffer);
+			for (int i = 0; i < instruction.length; i++)
+				printf("0x%x ", *(hookData->modifiedPagesStart + currentOffset + i));
 
-			ZydisEncoderRequest request;
-			ZeroMemory(&request, sizeof(request));
-
-			if (ZYAN_FAILED(ZydisEncoderDecodedInstructionToEncoderRequest(&instruction, operands, instruction.operand_count_visible, &request)))
-			{
-				printf("Failed to convert decoded instruction to encoder request!\n");
-				continue;
-			}
-
-			for (int i = 0; i < request.operand_count; i++)
-			{
-				ZydisEncoderOperand* operand = &request.operands[i];
-				if (operand->type == ZYDIS_OPERAND_TYPE_MEMORY &&
-					operand->mem.base == ZYDIS_REGISTER_RIP)
-				{
-					operand->mem.base = ZYDIS_REGISTER_RAX;
-				}
-
-				if (operand->type == ZYDIS_OPERAND_TYPE_IMMEDIATE
-					&& request.branch_type != ZYDIS_BRANCH_TYPE_NONE)
-				{
-					operand->type = ZYDIS_OPERAND_TYPE_MEMORY;
-					operand->mem.base = ZYDIS_REGISTER_RAX;
-					operand->mem.displacement = operand->imm.s;
-					operand->imm.s = 0;
-					operand->mem.size = 8;
-
-					request.branch_type = ZYDIS_BRANCH_TYPE_NONE;
-					request.branch_width = ZYDIS_BRANCH_WIDTH_NONE;
-				}
-			}
-
-			UINT8 encodedInstruction[ZYDIS_MAX_INSTRUCTION_LENGTH];
-			ZyanUSize length = sizeof(encodedInstruction);
-			ZyanStatus status = ZydisEncoderEncodeInstruction(&request, encodedInstruction, &length);
-			if (ZYAN_FAILED(status))
-			{
-				printf("Failed to re-encode this instruction! 0x%lx\n", ZYAN_STATUS_CODE(status));
-				continue;
-			}
-
-			ZydisDisassembledInstruction instr;
-			if (ZYAN_FAILED(ZydisDisassembleIntel(ZYDIS_MACHINE_MODE_LONG_64, ZYDIS_RUNTIME_ADDRESS_NONE, encodedInstruction, length, &instr)))
-			{
-				printf("Failed to re-disassemble the encoded instruction!\n");
-				continue;
-			}
-
-			printf("\tfixed -> %s\n", instr.text);
-
-			printf("\n");
+			printf("\n\n");
 		}
 		else
 		{
-			//memcpy(hookData->modifiedPagesStart + currentOffset, (void*)currentAddress, instruction.length);
+			memcpy(hookData->modifiedPagesStart + currentOffset, (void*)currentAddress, instruction.length);
 		}
+
+		if (instruction.mnemonic == ZYDIS_MNEMONIC_RET)
+			break;
 	}
 
 	return true;
@@ -406,12 +424,15 @@ void UninitializePFH()
 
 int main()
 {
-	/*if (!InitializePFH())
+	if (!InitializePFH())
 		return -1;
 
 	InstallHook(&MessageBoxA);
 
-	UninitializePFH();*/
+	UINT8* messageBoxA = singleHook.modifiedPagesStart + (singleHook.hookAddress - singleHook.hookPage);
+	((decltype(MessageBoxA)*)(messageBoxA))(nullptr, "Test", nullptr, MB_ICONWARNING);
+
+	UninitializePFH();
 
 	return 0;
 }
