@@ -148,6 +148,8 @@ ZyanStatus PlaceAbsoluteInstruction(UINT8** relocationCursor, ZydisRegister reg,
 	ZydisEncoderRequest request;
 	ZeroMemory(&request, sizeof(request));
 
+	// We will also need to perform checks to see if the location
+	// lands within or outside our page for all types of branches.
 	if (instruction->meta.branch_type != ZYDIS_BRANCH_TYPE_NONE)
 	{
 		if (instruction->meta.category == ZYDIS_CATEGORY_CALL)
@@ -204,26 +206,6 @@ ZyanStatus PlaceAbsoluteInstruction(UINT8** relocationCursor, ZydisRegister reg,
 			operand->mem.base == ZYDIS_REGISTER_RIP)
 		{
 			operand->mem.base = reg;
-			break;
-		}
-
-		if (operand->type == ZYDIS_OPERAND_TYPE_IMMEDIATE
-			&& request.branch_type != ZYDIS_BRANCH_TYPE_NONE)
-		{
-			// We don't need any of this (including the push, mov, pop)
-			// for absolute jumps
-
-			// We will also need to perform checks to see if the location
-			// lands within or outside our page
-
-			/*operand->type = ZYDIS_OPERAND_TYPE_MEMORY;
-			operand->mem.base = reg;
-			operand->mem.displacement = operand->imm.s;
-			operand->imm.s = 0;
-			operand->mem.size = 8;
-
-			request.branch_type = ZYDIS_BRANCH_TYPE_NONE;
-			request.branch_width = ZYDIS_BRANCH_WIDTH_NONE;*/
 			break;
 		}
 	}
@@ -359,7 +341,8 @@ bool ParseAndTranslate(HookData* hookData)
 		/*if (instruction.meta.category == ZYDIS_CATEGORY_COND_BR)
 			continue;*/
 
-		if (instruction.attributes & ZYDIS_ATTRIB_IS_RELATIVE && instruction.meta.category != ZYDIS_CATEGORY_COND_BR)
+		if (instruction.attributes & ZYDIS_ATTRIB_IS_RELATIVE && 
+			instruction.meta.category != ZYDIS_CATEGORY_COND_BR)
 		{
 			if (!TranslateRelativeInstruction(hookData, currentOffset, &instruction, operands))
 				return false;
