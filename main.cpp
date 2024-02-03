@@ -39,6 +39,9 @@ struct Disassembler
 void* gExceptionHandlerHandle = nullptr;
 HookData singleHook;
 
+// Change instructionsEnd to the proper instruction end, create new struct variable for relocationCursorStart, switch uses of instructionsEnd to relocationCursorStart
+// It could also be valuable to change instructionsEnd and instructionsStart to originalInstructionsEnd and originalInstructionsStart
+
 // More TODOs: Adding multi-threading support (locks), split code into different files, 
 // work on proper tracking of eflags and stack while disassembling so that we can uncover bad branches related to obfuscation
 // Use classes for the Disassembler struct and the HookData struct
@@ -56,6 +59,8 @@ HookData singleHook;
 // 
 // We could also keep a database for translations that fall within these criteria (there are very few)
 //
+
+bool ParseAndTranslate(HookData* hookData, UINT8* address);
 
 ZyanStatus InitializeDisassembler(Disassembler* disassembler, ZydisMachineMode machineMode, ZydisStackWidth stackWidth, UINT8* address)
 {
@@ -86,7 +91,7 @@ long __stdcall ExceptionHandler(EXCEPTION_POINTERS* exceptionInfo)
 	}
 	else if (exceptionRecord->ExceptionCode == EXCEPTION_BREAKPOINT)
 	{
-
+		
 	}
 
 	return EXCEPTION_CONTINUE_SEARCH;
@@ -202,7 +207,7 @@ ZyanStatus PlaceAbsoluteInstruction(UINT8** relocationCursor, UINT64 rip,
 	// We will also need to perform checks to see if the location
 	// lands within or outside our page for all types of branches.
 	// Also add checks to see if the instruction that we branch to
-	// is caught between two pages.
+	// is caught between the hooked page and another page.
 	//
 	if (instruction->meta.branch_type != ZYDIS_BRANCH_TYPE_NONE)
 	{
@@ -351,20 +356,16 @@ bool TranslateRelativeInstruction(HookData* hookData, Disassembler* disassembler
 			hookData->relocationCursor += instruction->length;
 		}
 
-		if ((disassembler->address + instruction->length) >= hookData->hookPageEnd)
+		if ((disassembler->address + instruction->length) >= hookData->hookPageEnd ||
+			totalLength >= JMP_SIZE_32)
 		{
 			break;
 		}
-
-		if (totalLength < JMP_SIZE_32)
+		else
 		{
 			NextInstruction(disassembler);
 			if (ZYAN_FAILED(Disassemble(disassembler, ZYDIS_MAX_INSTRUCTION_LENGTH)))
 				return false;
-		}
-		else
-		{
-			break;
 		}
 	}
 
@@ -377,11 +378,20 @@ bool TranslateRelativeInstruction(HookData* hookData, Disassembler* disassembler
 	return true;
 }
 
-bool ParseAndTranslate(HookData* hookData)
+bool VerifyInstruction(UINT8* address, UINT8 length)
+{
+	for (UINT8 i = 0; i < length; i++)
+		if (*(address + i) != 0xCC)
+			return false;
+
+	return true;
+}
+
+bool ParseAndTranslate(HookData* hookData, UINT8* address)
 {
 	Disassembler disassembler;
 	if (ZYAN_FAILED(InitializeDisassembler(&disassembler,
-		ZYDIS_MACHINE_MODE_LONG_64, ZYDIS_STACK_WIDTH_64, hookData->hookAddress)))
+		ZYDIS_MACHINE_MODE_LONG_64, ZYDIS_STACK_WIDTH_64, address)))
 	{
 		return false;
 	}
@@ -398,6 +408,13 @@ bool ParseAndTranslate(HookData* hookData)
 
 		ZydisDecodedInstruction* instruction = &disassembler.instruction;
 
+		// Don't make passes over analyzed instructions
+		if (!VerifyInstruction(hookData->instructionsStart + (disassembler.address -
+			hookData->hookPageStart), instruction->length))
+		{
+			break;
+		}
+
 		// JCCs can be unreliable to track, let the hardware handle it
 		// We may need to track eflags and deal with jccs
 		// We could put breakpoints on the jccs
@@ -410,8 +427,36 @@ bool ParseAndTranslate(HookData* hookData)
 		if (instruction->attributes & ZYDIS_ATTRIB_IS_RELATIVE /*&&
 			instruction->meta.category != ZYDIS_CATEGORY_COND_BR*/)
 		{
-			if (!TranslateRelativeInstruction(hookData, &disassembler))
-				return false;
+			if (instruction->meta.branch_type != ZYDIS_BRANCH_TYPE_NONE)
+			{
+				UINT8* modifiedPageRIP = hookData->instructionsStart +
+					((disassembler.address + instruction->length) - hookData->hookPageStart);
+
+				UINT8* branchAddress = modifiedPageRIP + disassembler.operands[0].imm.value.s;
+				if (branchAddress >= hookData->modifiedPagesStart && branchAddress < hookData->instructionsEnd)
+				{
+					memcpy(hookData->instructionsStart + (disassembler.address -
+						hookData->hookPageStart), disassembler.address, instruction->length);
+
+					UINT8* originalRIP = disassembler.address + instruction->length;
+					UINT8* originalBranch = originalRIP + disassembler.operands[0].imm.value.s;
+					if (!ParseAndTranslate(hookData, originalBranch))
+					{
+						MessageBoxA(nullptr, "Failed", nullptr, MB_ICONERROR);
+						return false;
+					}
+				}
+				else
+				{
+					if (!TranslateRelativeInstruction(hookData, &disassembler))
+						return false;
+				}
+			}
+			else
+			{
+				if (!TranslateRelativeInstruction(hookData, &disassembler))
+					return false;
+			}
 		}
 		else
 		{
@@ -419,17 +464,15 @@ bool ParseAndTranslate(HookData* hookData)
 				hookData->hookPageStart), disassembler.address, instruction->length);
 		}
 
-		if (disassembler.address >= hookData->hookPageEnd)
-		{
-			PlaceAbsoluteJump(hookData->instructionsStart + (disassembler.address -
-				hookData->hookPageStart), (UINT64)disassembler.address);
-
-			break;
-		}
-
 		// This needs to change
 		if (instruction->mnemonic == ZYDIS_MNEMONIC_RET)
 			break;
+	}
+
+	if ((disassembler.address) >= hookData->hookPageEnd)
+	{
+		PlaceAbsoluteJump(hookData->instructionsStart + (disassembler.address -
+			hookData->hookPageStart), (UINT64)disassembler.address);
 	}
 
 	return true;
@@ -455,7 +498,7 @@ bool InstallHook(void* address)
 	singleHook.instructionsStart = singleHook.modifiedPagesStart + ZYDIS_MAX_INSTRUCTION_LENGTH;
 	singleHook.instructionsEnd = singleHook.relocationCursor;
 
-	return ParseAndTranslate(&singleHook);
+	return ParseAndTranslate(&singleHook, singleHook.hookAddress);
 }
 
 void RemoveHook(void* address)
