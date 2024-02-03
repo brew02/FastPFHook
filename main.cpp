@@ -22,8 +22,9 @@ struct HookData
 	UINT8* hookAddress;
 	UINT8* hookPageStart;
 	UINT8* hookPageEnd;
-	UINT8* instructionsStart;
-	UINT8* instructionsEnd;
+	UINT8* originalInstructionStart;
+	UINT8* originalInstructionEnd;
+	UINT8* relocationCursorStart;
 	UINT8* relocationCursor;
 };
 
@@ -39,8 +40,7 @@ struct Disassembler
 void* gExceptionHandlerHandle = nullptr;
 HookData singleHook;
 
-// Change instructionsEnd to the proper instruction end, create new struct variable for relocationCursorStart, switch uses of instructionsEnd to relocationCursorStart
-// It could also be valuable to change instructionsEnd and instructionsStart to originalInstructionsEnd and originalInstructionsStart
+// Use offsets to make things cleaner (or go to classes and do stuff that way)
 
 // More TODOs: Adding multi-threading support (locks), split code into different files, 
 // work on proper tracking of eflags and stack while disassembling so that we can uncover bad branches related to obfuscation
@@ -324,7 +324,7 @@ bool TranslateRelativeInstruction(HookData* hookData, Disassembler* disassembler
 	ZydisDecodedInstruction* instruction = &disassembler->instruction;
 	ZydisDecodedOperand* operands = disassembler->operands;
 
-	UINT8* currentModifiedAddress = hookData->instructionsStart +
+	UINT8* currentModifiedAddress = hookData->originalInstructionStart +
 		(disassembler->address - hookData->hookPageStart);
 
 	UINT8* nextModifiedAddress = currentModifiedAddress + instruction->length;
@@ -409,7 +409,7 @@ bool ParseAndTranslate(HookData* hookData, UINT8* address)
 		ZydisDecodedInstruction* instruction = &disassembler.instruction;
 
 		// Don't make passes over analyzed instructions
-		if (!VerifyInstruction(hookData->instructionsStart + (disassembler.address -
+		if (!VerifyInstruction(hookData->originalInstructionStart + (disassembler.address -
 			hookData->hookPageStart), instruction->length))
 		{
 			break;
@@ -429,13 +429,13 @@ bool ParseAndTranslate(HookData* hookData, UINT8* address)
 		{
 			if (instruction->meta.branch_type != ZYDIS_BRANCH_TYPE_NONE)
 			{
-				UINT8* modifiedPageRIP = hookData->instructionsStart +
+				UINT8* modifiedPageRIP = hookData->originalInstructionStart +
 					((disassembler.address + instruction->length) - hookData->hookPageStart);
 
 				UINT8* branchAddress = modifiedPageRIP + disassembler.operands[0].imm.value.s;
-				if (branchAddress >= hookData->modifiedPagesStart && branchAddress < hookData->instructionsEnd)
+				if (branchAddress >= hookData->modifiedPagesStart && branchAddress < hookData->originalInstructionEnd)
 				{
-					memcpy(hookData->instructionsStart + (disassembler.address -
+					memcpy(hookData->originalInstructionStart + (disassembler.address -
 						hookData->hookPageStart), disassembler.address, instruction->length);
 
 					UINT8* originalRIP = disassembler.address + instruction->length;
@@ -460,7 +460,7 @@ bool ParseAndTranslate(HookData* hookData, UINT8* address)
 		}
 		else
 		{
-			memcpy(hookData->instructionsStart + (disassembler.address -
+			memcpy(hookData->originalInstructionStart + (disassembler.address -
 				hookData->hookPageStart), disassembler.address, instruction->length);
 		}
 
@@ -471,7 +471,7 @@ bool ParseAndTranslate(HookData* hookData, UINT8* address)
 
 	if ((disassembler.address) >= hookData->hookPageEnd)
 	{
-		PlaceAbsoluteJump(hookData->instructionsStart + (disassembler.address -
+		PlaceAbsoluteJump(hookData->originalInstructionStart + (disassembler.address -
 			hookData->hookPageStart), (UINT64)disassembler.address);
 	}
 
@@ -495,8 +495,9 @@ bool InstallHook(void* address)
 	singleHook.modifiedPagesEnd = modifiedPage + INITIAL_HOOK_SIZE;
 
 	singleHook.relocationCursor = modifiedPage + PAGE_SIZE + ZYDIS_MAX_INSTRUCTION_LENGTH * 2 + JMP_SIZE_ABS;
-	singleHook.instructionsStart = singleHook.modifiedPagesStart + ZYDIS_MAX_INSTRUCTION_LENGTH;
-	singleHook.instructionsEnd = singleHook.relocationCursor;
+	singleHook.relocationCursorStart = singleHook.relocationCursor;
+	singleHook.originalInstructionStart = singleHook.modifiedPagesStart + ZYDIS_MAX_INSTRUCTION_LENGTH;
+	singleHook.originalInstructionEnd = singleHook.relocationCursor - (ZYDIS_MAX_INSTRUCTION_LENGTH + JMP_SIZE_ABS);
 
 	return ParseAndTranslate(&singleHook, singleHook.hookAddress);
 }
@@ -527,7 +528,7 @@ int main()
 
 	InstallHook(&MessageBoxA);
 
-	UINT8* messageBoxA = singleHook.instructionsStart + (singleHook.hookAddress - singleHook.hookPageStart);
+	UINT8* messageBoxA = singleHook.originalInstructionStart + (singleHook.hookAddress - singleHook.hookPageStart);
 	((decltype(MessageBoxA)*)(messageBoxA))(nullptr, "Test", nullptr, MB_ICONWARNING);
 
 	UninitializePFH();
