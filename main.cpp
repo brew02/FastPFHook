@@ -97,15 +97,28 @@ long __stdcall ExceptionHandler(EXCEPTION_POINTERS* exceptionInfo)
 					return EXCEPTION_CONTINUE_SEARCH;
 				}
 
-				UINT8 offset = static_cast<UINT8>(singleHook.hookPageStart - rip);
+				UINT8 bytesAbove = static_cast<UINT8>(singleHook.hookPageStart - rip);
 				UINT8 length = disassembler.instruction.length;
+				
 				if ((rip + length) < singleHook.hookPageStart)
 				{
 					return EXCEPTION_CONTINUE_SEARCH;
 				}
 
+				UINT8 bytesBelow = length - bytesAbove;
 				singleHook.topBoundaryInstructionLength = length;
-				ZydisEncoderNopFill(singleHook.originalInstructionStart, (length - offset));
+				UINT8 mpInstructionLength = 0;
+
+				if (disassembler.instruction.attributes & ZYDIS_ATTRIB_IS_RELATIVE)
+				{
+
+				}
+				else
+				{
+
+				}
+
+				//ZydisEncoderNopFill(singleHook.originalInstructionStart, (length - offset));
 				// Make new function so that we can analyze and replace single instructions
 			}
 			else if ((rip + singleHook.topBoundaryInstructionLength) < singleHook.hookPageStart)
@@ -352,17 +365,14 @@ ZyanStatus PlaceAbsoluteInstruction(UINT8** relocationCursor, UINT64 rip,
 // Need to add extending capabilities for when relocationCursor crosses outside
 // of the modifiedPage boundaries.
 
-bool TranslateRelativeInstruction(HookData* hookData, Disassembler* disassembler)
+bool TranslateRelativeInstruction(HookData* hookData, Disassembler* disassembler, UINT8* mpAddress)
 {
 	ZydisDecodedInstruction* instruction = &disassembler->instruction;
 	ZydisDecodedOperand* operands = disassembler->operands;
 
-	UINT8* currentModifiedAddress = hookData->originalInstructionStart +
-		(disassembler->address - hookData->hookPageStart);
+	UINT8* nextMPInstruction = mpAddress + instruction->length;
 
-	UINT8* nextModifiedAddress = currentModifiedAddress + instruction->length;
-
-	UINT32 relocationRVA = (UINT32)(hookData->relocationCursor - (currentModifiedAddress + JMP_SIZE_32));
+	UINT32 relocationRVA = (UINT32)(hookData->relocationCursor - (mpAddress + JMP_SIZE_32));
 	UINT8 totalLength = 0;
 
 	while (true)
@@ -396,10 +406,10 @@ bool TranslateRelativeInstruction(HookData* hookData, Disassembler* disassembler
 		}
 	}
 
-	PlaceRelativeJump(currentModifiedAddress, (INT32)relocationRVA);
-	ZydisEncoderNopFill(currentModifiedAddress + JMP_SIZE_32, totalLength - JMP_SIZE_32);
+	PlaceRelativeJump(mpAddress, (INT32)relocationRVA);
+	ZydisEncoderNopFill(mpAddress + JMP_SIZE_32, totalLength - JMP_SIZE_32);
 
-	PlaceRelativeJump(hookData->relocationCursor, (INT32)(nextModifiedAddress - (hookData->relocationCursor + JMP_SIZE_32)));
+	PlaceRelativeJump(hookData->relocationCursor, (INT32)(nextMPInstruction - (hookData->relocationCursor + JMP_SIZE_32)));
 	hookData->relocationCursor += JMP_SIZE_32;
 
 	return true;
@@ -439,7 +449,7 @@ bool ParseAndTranslateSingleInstruction(Disassembler* disassembler, HookData* ho
 			}
 		}
 
-		if (!TranslateRelativeInstruction(hookData, disassembler))
+		if (!TranslateRelativeInstruction(hookData, disassembler, mpAddress))
 			return false;
 	}
 	else
