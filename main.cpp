@@ -15,6 +15,8 @@
 
 #define GP_REGISTER_COUNT (ZYDIS_REGISTER_R15 - ZYDIS_REGISTER_RAX) + 1
 
+#define SINGLE_STEP_BIT 0b100000000llu
+
 struct HookData
 {
 	UINT8* modifiedPagesStart;
@@ -86,7 +88,7 @@ bool SafeRelocate(HookData* hookData, const void* buffer, size_t length)
 	return true;
 }
 
-bool ParseAndTranslate(HookData* hookData, UINT8* address);
+bool ParseAndTranslate(HookData* hookData, UINT8* address, bool parseBranch);
 
 ZyanStatus InitializeDisassembler(Disassembler* disassembler, ZydisMachineMode machineMode, ZydisStackWidth stackWidth, UINT8* address)
 {
@@ -172,9 +174,20 @@ long __stdcall ExceptionHandler(EXCEPTION_POINTERS* exceptionInfo)
 	}
 	else if (exceptionRecord->ExceptionCode == EXCEPTION_BREAKPOINT)
 	{
+		// Perform additional analysis on rip and the branch to work
 		if (rip >= singleHook.originalInstructionStart && rip < singleHook.originalInstructionEnd)
 		{
-			ParseAndTranslate(&singleHook, singleHook.hookPageStart + (rip - singleHook.originalInstructionStart));
+			ParseAndTranslate(&singleHook, singleHook.hookPageStart + (rip - singleHook.originalInstructionStart), true);
+			contextRecord->EFlags |= SINGLE_STEP_BIT;
+			return EXCEPTION_CONTINUE_EXECUTION;
+		}
+	}
+	else if (exceptionRecord->ExceptionCode == EXCEPTION_SINGLE_STEP)
+	{
+		if (rip >= singleHook.originalInstructionStart && rip < singleHook.originalInstructionEnd)
+		{
+			ParseAndTranslate(&singleHook, singleHook.hookPageStart + (rip - singleHook.originalInstructionStart), false);
+			contextRecord->EFlags &= ~(SINGLE_STEP_BIT);
 			return EXCEPTION_CONTINUE_EXECUTION;
 		}
 	}
@@ -499,7 +512,7 @@ bool VerifyInstruction(UINT8* address, UINT8 length)
 	return true;
 }
 
-bool ParseAndTranslateSingleInstruction(Disassembler* disassembler, HookData* hookData)
+bool ParseAndTranslateSingleInstruction(Disassembler* disassembler, HookData* hookData, bool parseBranch)
 {
 	ZydisDecodedInstruction* instruction = &disassembler->instruction;
 	UINT8* mpAddress = hookData->originalInstructionStart +
@@ -509,6 +522,9 @@ bool ParseAndTranslateSingleInstruction(Disassembler* disassembler, HookData* ho
 	{
 		if (instruction->meta.branch_type != ZYDIS_BRANCH_TYPE_NONE)
 		{
+			if (!parseBranch)
+				return true;
+
 			UINT8* mpBranchAddress = mpAddress + 
 				instruction->length + disassembler->operands[0].imm.value.s;
 
@@ -543,7 +559,7 @@ bool ParseAndTranslateSingleInstruction(Disassembler* disassembler, HookData* ho
 	return true;
 }
 
-bool ParseAndTranslate(HookData* hookData, UINT8* address)
+bool ParseAndTranslate(HookData* hookData, UINT8* address, bool parseBranch)
 {
 	Disassembler disassembler;
 	if (ZYAN_FAILED(InitializeDisassembler(&disassembler,
@@ -571,7 +587,7 @@ bool ParseAndTranslate(HookData* hookData, UINT8* address)
 			break;
 		}
 
-		if (!ParseAndTranslateSingleInstruction(&disassembler, hookData))
+		if (!ParseAndTranslateSingleInstruction(&disassembler, hookData, parseBranch))
 			return false;
 
 		// Maybe move this above the ParseAndTranslateSingleInstruction for accurate branch parsing
@@ -617,7 +633,7 @@ bool InstallHook(void* address)
 
 	singleHook.relocationCursor = singleHook.modifiedPagesEnd - ZYDIS_MAX_INSTRUCTION_LENGTH;
 
-	return ParseAndTranslate(&singleHook, singleHook.hookAddress);
+	return ParseAndTranslate(&singleHook, singleHook.hookAddress, false);
 }
 
 void RemoveHook(void* address)
