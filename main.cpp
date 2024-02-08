@@ -145,18 +145,9 @@ long __stdcall ExceptionHandler(EXCEPTION_POINTERS* exceptionInfo)
 				singleHook.topBoundaryInstructionLength = length;
 				UINT8 mpInstructionLength = 0;
 
-				if (disassembler.instruction.attributes & ZYDIS_ATTRIB_IS_RELATIVE)
-				{
-
-				}
-				else
-				{
-
-				}
-				
-				// ZydisEncoderNopFill(singleHook.originalInstructionStart, (length - offset));
-				// Reimplement functionality to translate single instruction and place at
-				// the start of the page.
+				// Modify ParseAndTranslateSingleInstruction to handle the special topInstruction case
+				// Add additional code to the breakpoint handler to account for this, and
+				// add a bool to ParseAndTranslate for topInstruction.
 			}
 			else if ((rip + singleHook.topBoundaryInstructionLength) < singleHook.hookPageStart)
 			{
@@ -531,17 +522,21 @@ bool ParseAndTranslateSingleInstruction(Disassembler* disassembler, HookData* ho
 			if (mpBranchAddress >= hookData->originalInstructionStart &&
 				mpBranchAddress < hookData->originalInstructionEnd)
 			{
-				// Care must be taken for relative unconditional branches as well
-				// Certain branches of this variety in obfuscated code will branch
-				// between instruction boundaries. 
-				// To combat this we simply check to see if the instruction that
-				// we parse is any different from the original page.
-				// 
-				// Relative UNCONDITIONAL branches should be taken care of, at least
+				// Relative CONDITIONAL branches should be taken care of, at least
 				// for opaque predicates, but a better approach that would allow for
 				// better analysis would be to leave the breakpoints on the branching
 				// instructions themselves, and then single-step to the next instruction,
 				// thus letting the hardware do the heavy lifting.
+				// There are still extreme circumstances where unconditional branches
+				// using other registers as displacement could cause issues (think about it).
+
+				// Potential fix, check for specific circumstances:
+				// lea reg1, [rip]
+				// add reg1, reg2 
+				// unconditional branch [reg1]
+				// Translate such a branch so that an absolute address jumping
+				// to the original page is calculated. Handle bad branches in the
+				// page fault handler.
 
 				memcpy(mpAddress, disassembler->address, instruction->length);
 				return true;
