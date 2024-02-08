@@ -43,14 +43,14 @@ void* gExceptionHandlerHandle = nullptr;
 HookData singleHook;
 
 // More TODOs: Adding multi-threading support (locks), split code into different files, 
-// work on proper tracking of eflags and stack while disassembling so that we can uncover bad branches related to obfuscation
+// read comment about unconditional branches below (somewhere)
 // Use classes for the Disassembler struct and the HookData struct
 
 // Short relative instructions will cause a problem with this current method
 // because a direct translation from the original page to the modified page
 // will cause the instruction pointer to be in the middle of one of our jumps.
 // 
-// We could keep a database for translations that fall within these criteria (there are very few)
+// We should keep a database for translations that fall within these criteria (there are very few)
 //
 
 bool SafeRelocate(HookData* hookData, const void* buffer, size_t length)
@@ -151,9 +151,10 @@ long __stdcall ExceptionHandler(EXCEPTION_POINTERS* exceptionInfo)
 				{
 
 				}
-
-				//ZydisEncoderNopFill(singleHook.originalInstructionStart, (length - offset));
-				// Make new function so that we can analyze and replace single instructions
+				
+				// ZydisEncoderNopFill(singleHook.originalInstructionStart, (length - offset));
+				// Reimplement functionality to translate single instruction and place at
+				// the start of the page.
 			}
 			else if ((rip + singleHook.topBoundaryInstructionLength) < singleHook.hookPageStart)
 			{
@@ -173,7 +174,6 @@ long __stdcall ExceptionHandler(EXCEPTION_POINTERS* exceptionInfo)
 	{
 		if (rip >= singleHook.originalInstructionStart && rip < singleHook.originalInstructionEnd)
 		{
-			// Alternate method to the recursive one in ParseInTranslate (that one must be commented out for this to work)
 			ParseAndTranslate(&singleHook, singleHook.hookPageStart + (rip - singleHook.originalInstructionStart));
 			return EXCEPTION_CONTINUE_EXECUTION;
 		}
@@ -519,7 +519,13 @@ bool ParseAndTranslateSingleInstruction(Disassembler* disassembler, HookData* ho
 				// Certain branches of this variety in obfuscated code will branch
 				// between instruction boundaries. 
 				// To combat this we simply check to see if the instruction that
-				// we parse is any different from the original page. 
+				// we parse is any different from the original page.
+				// 
+				// Relative UNCONDITIONAL branches should be taken care of, at least
+				// for opaque predicates, but a better approach that would allow for
+				// better analysis would be to leave the breakpoints on the branching
+				// instructions themselves, and then single-step to the next instruction,
+				// thus letting the hardware do the heavy lifting.
 
 				memcpy(mpAddress, disassembler->address, instruction->length);
 				return true;
