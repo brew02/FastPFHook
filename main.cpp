@@ -55,6 +55,8 @@ HookData singleHook;
 // We should keep a database for translations that fall within these criteria (there are very few)
 //
 
+bool ParseAndTranslate(HookData* hookData, UINT8* address, bool parseBranch, bool topInstruction);
+
 bool SafeRelocate(HookData* hookData, const void* buffer, size_t length)
 {
 	if ((hookData->relocationCursor + length) >= hookData->modifiedPagesEnd)
@@ -87,8 +89,6 @@ bool SafeRelocate(HookData* hookData, const void* buffer, size_t length)
 
 	return true;
 }
-
-bool ParseAndTranslate(HookData* hookData, UINT8* address, bool parseBranch);
 
 ZyanStatus InitializeDisassembler(Disassembler* disassembler, ZydisMachineMode machineMode, ZydisStackWidth stackWidth, UINT8* address)
 {
@@ -168,7 +168,7 @@ long __stdcall ExceptionHandler(EXCEPTION_POINTERS* exceptionInfo)
 		// Perform additional analysis on rip and the branch to work
 		if (rip >= singleHook.originalInstructionStart && rip < singleHook.originalInstructionEnd)
 		{
-			ParseAndTranslate(&singleHook, singleHook.hookPageStart + (rip - singleHook.originalInstructionStart), true);
+			ParseAndTranslate(&singleHook, singleHook.hookPageStart + (rip - singleHook.originalInstructionStart), true, false);
 			contextRecord->EFlags |= SINGLE_STEP_BIT;
 			return EXCEPTION_CONTINUE_EXECUTION;
 		}
@@ -177,7 +177,7 @@ long __stdcall ExceptionHandler(EXCEPTION_POINTERS* exceptionInfo)
 	{
 		if (rip >= singleHook.originalInstructionStart && rip < singleHook.originalInstructionEnd)
 		{
-			ParseAndTranslate(&singleHook, singleHook.hookPageStart + (rip - singleHook.originalInstructionStart), false);
+			ParseAndTranslate(&singleHook, singleHook.hookPageStart + (rip - singleHook.originalInstructionStart), false, false);
 			contextRecord->EFlags &= ~(SINGLE_STEP_BIT);
 			return EXCEPTION_CONTINUE_EXECUTION;
 		}
@@ -554,7 +554,7 @@ bool ParseAndTranslateSingleInstruction(Disassembler* disassembler, HookData* ho
 	return true;
 }
 
-bool ParseAndTranslate(HookData* hookData, UINT8* address, bool parseBranch)
+bool ParseAndTranslate(HookData* hookData, UINT8* address, bool parseBranch, bool topInstruction)
 {
 	Disassembler disassembler;
 	if (ZYAN_FAILED(InitializeDisassembler(&disassembler,
@@ -628,7 +628,7 @@ bool InstallHook(void* address)
 
 	singleHook.relocationCursor = singleHook.modifiedPagesEnd - ZYDIS_MAX_INSTRUCTION_LENGTH;
 
-	return ParseAndTranslate(&singleHook, singleHook.hookAddress, false);
+	return ParseAndTranslate(&singleHook, singleHook.hookAddress, false, false);
 }
 
 void RemoveHook(void* address)
