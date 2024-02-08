@@ -75,8 +75,8 @@
     <LibraryPath>C:\source\active\FastPFHook\zydis;$(LibraryPath)</LibraryPath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-    <IncludePath>C:\source\active\FastPFHook\zydis;$(IncludePath)</IncludePath>
-    <LibraryPath>C:\source\active\FastPFHook\zydis;$(LibraryPath)</LibraryPath>
+    <IncludePath>$(ProjectDir)zydis;$(IncludePath)</IncludePath>
+    <LibraryPath>$(ProjectDir)zydis;$(LibraryPath)</LibraryPath>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <ClCompile>
