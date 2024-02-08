@@ -503,7 +503,7 @@ bool VerifyInstruction(UINT8* address, UINT8 length)
 	return true;
 }
 
-bool ParseAndTranslateSingleInstruction(Disassembler* disassembler, HookData* hookData, bool parseBranch)
+bool ParseAndTranslateSingleInstruction(Disassembler* disassembler, HookData* hookData, bool parseBranch, bool topInstruction)
 {
 	ZydisDecodedInstruction* instruction = &disassembler->instruction;
 	UINT8* mpAddress = hookData->originalInstructionStart +
@@ -582,7 +582,7 @@ bool ParseAndTranslate(HookData* hookData, UINT8* address, bool parseBranch, boo
 			break;
 		}
 
-		if (!ParseAndTranslateSingleInstruction(&disassembler, hookData, parseBranch))
+		if (!ParseAndTranslateSingleInstruction(&disassembler, hookData, parseBranch, topInstruction))
 			return false;
 
 		// Maybe move this above the ParseAndTranslateSingleInstruction for accurate branch parsing
