@@ -440,13 +440,13 @@ ZyanStatus PlaceAbsoluteInstruction(HookData* hookData, UINT64 rip,
 }
 
 // Messy but working (change the hookData->originalInstructionStart +... stuff)
-bool TranslateRelativeInstruction(HookData* hookData, Disassembler* disassembler)
+bool TranslateRelativeInstruction(HookData* hookData, Disassembler* disassembler, bool topInstruction)
 {
 	ZydisDecodedInstruction* instruction = &disassembler->instruction;
 	ZydisDecodedOperand* operands = disassembler->operands;
 
-	UINT32 relocationRVA = (UINT32)(hookData->relocationCursor - (hookData->originalInstructionStart + (disassembler->address -
-		hookData->hookPageStart) + JMP_SIZE_32));
+	UINT32 relocationRVA = (UINT32)(hookData->relocationCursor - (topInstruction ? hookData->modifiedPagesStart : (hookData->originalInstructionStart + 
+		(disassembler->address - hookData->hookPageStart)) + JMP_SIZE_32));
 	UINT8 totalLength = 0;
 
 	while (true)
@@ -474,19 +474,26 @@ bool TranslateRelativeInstruction(HookData* hookData, Disassembler* disassembler
 		}
 		else
 		{
+			if (!topInstruction)
+				break;
+
 			NextInstruction(disassembler);
 			if (ZYAN_FAILED(Disassemble(disassembler, ZYDIS_MAX_INSTRUCTION_LENGTH)))
 				return false;
 		}
 	}
 
-	PlaceRelativeJump(hookData->originalInstructionStart + (disassembler->address -
-		hookData->hookPageStart), (INT32)relocationRVA);
-	ZydisEncoderNopFill(hookData->originalInstructionStart + (disassembler->address -
-		hookData->hookPageStart) + JMP_SIZE_32, totalLength - JMP_SIZE_32);
+	PlaceRelativeJump((topInstruction ? hookData->modifiedPagesStart : (hookData->originalInstructionStart + 
+		(disassembler->address - hookData->hookPageStart))), (INT32)relocationRVA);
 
-	if (!PlaceRelativeJump(hookData, (INT32)(hookData->originalInstructionStart + (disassembler->address -
-		hookData->hookPageStart) + instruction->length -(hookData->relocationCursor + JMP_SIZE_32))))
+	if (!topInstruction)
+	{
+		ZydisEncoderNopFill(hookData->originalInstructionStart + (disassembler->address -
+			hookData->hookPageStart) + JMP_SIZE_32, totalLength - JMP_SIZE_32);
+	}
+
+	if (!PlaceRelativeJump(hookData, (INT32)((topInstruction ? (hookData->modifiedPagesStart + JMP_SIZE_32) : (hookData->originalInstructionStart + 
+		(disassembler->address - hookData->hookPageStart) + instruction->length)) - (hookData->relocationCursor + JMP_SIZE_32))))
 	{
 		return false;
 	}
@@ -506,8 +513,8 @@ bool VerifyInstruction(UINT8* address, UINT8 length)
 bool ParseAndTranslateSingleInstruction(Disassembler* disassembler, HookData* hookData, bool parseBranch, bool topInstruction)
 {
 	ZydisDecodedInstruction* instruction = &disassembler->instruction;
-	UINT8* mpAddress = hookData->originalInstructionStart +
-		(disassembler->address - hookData->hookPageStart);
+	UINT8* mpAddress = (topInstruction ? hookData->modifiedPagesStart : 
+		(hookData->originalInstructionStart + (disassembler->address - hookData->hookPageStart)));
 
 	if (instruction->attributes & ZYDIS_ATTRIB_IS_RELATIVE)
 	{
@@ -543,7 +550,7 @@ bool ParseAndTranslateSingleInstruction(Disassembler* disassembler, HookData* ho
 			}
 		}
 
-		if (!TranslateRelativeInstruction(hookData, disassembler))
+		if (!TranslateRelativeInstruction(hookData, disassembler, topInstruction))
 			return false;
 	}
 	else
