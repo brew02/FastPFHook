@@ -15,7 +15,7 @@
 
 #define GP_REGISTER_COUNT (ZYDIS_REGISTER_R15 - ZYDIS_REGISTER_RAX) + 1
 
-#define SINGLE_STEP_BIT 0b100000000llu
+#define TRAP_FLAG 0b100000000llu
 
 struct HookData
 {
@@ -56,6 +56,7 @@ HookData singleHook;
 //
 
 bool ParseAndTranslate(HookData* hookData, UINT8* address, bool parseBranch, bool topInstruction);
+bool ParseAndTranslateSingleInstruction(Disassembler* disassembler, HookData* hookData, bool parseBranch, bool topInstruction);
 
 bool SafeRelocate(HookData* hookData, const void* buffer, size_t length)
 {
@@ -143,11 +144,12 @@ long __stdcall ExceptionHandler(EXCEPTION_POINTERS* exceptionInfo)
 
 				UINT8 bytesBelow = length - bytesAbove;
 				singleHook.topBoundaryInstructionLength = length;
-				UINT8 mpInstructionLength = 0;
+
+				memset(singleHook.modifiedPagesStart, 0x90, ZYDIS_MAX_INSTRUCTION_LENGTH + bytesBelow);
+				ParseAndTranslateSingleInstruction(&disassembler, &singleHook, false, true);
 
 				// Modify ParseAndTranslateSingleInstruction to handle the special topInstruction case
-				// Add additional code to the breakpoint handler to account for this, and
-				// add a bool to ParseAndTranslate for topInstruction.
+				// Add additional code to the breakpoint handler and single step handler to account for this
 			}
 			else if ((rip + singleHook.topBoundaryInstructionLength) < singleHook.hookPageStart)
 			{
@@ -169,7 +171,7 @@ long __stdcall ExceptionHandler(EXCEPTION_POINTERS* exceptionInfo)
 		if (rip >= singleHook.originalInstructionStart && rip < singleHook.originalInstructionEnd)
 		{
 			ParseAndTranslate(&singleHook, singleHook.hookPageStart + (rip - singleHook.originalInstructionStart), true, false);
-			contextRecord->EFlags |= SINGLE_STEP_BIT;
+			contextRecord->EFlags |= TRAP_FLAG;
 			return EXCEPTION_CONTINUE_EXECUTION;
 		}
 	}
@@ -178,7 +180,7 @@ long __stdcall ExceptionHandler(EXCEPTION_POINTERS* exceptionInfo)
 		if (rip >= singleHook.originalInstructionStart && rip < singleHook.originalInstructionEnd)
 		{
 			ParseAndTranslate(&singleHook, singleHook.hookPageStart + (rip - singleHook.originalInstructionStart), false, false);
-			contextRecord->EFlags &= ~(SINGLE_STEP_BIT);
+			contextRecord->EFlags &= ~(TRAP_FLAG);
 			return EXCEPTION_CONTINUE_EXECUTION;
 		}
 	}
@@ -632,8 +634,6 @@ bool InstallHook(void* address)
 	singleHook.originalInstructionEnd = singleHook.relocationCursorStart - (ZYDIS_MAX_INSTRUCTION_LENGTH + JMP_SIZE_ABS);
 	singleHook.topBoundaryInstructionLength = 0;
 	singleHook.mpSize = INITIAL_HOOK_SIZE;
-
-	singleHook.relocationCursor = singleHook.modifiedPagesEnd - ZYDIS_MAX_INSTRUCTION_LENGTH;
 
 	return ParseAndTranslate(&singleHook, singleHook.hookAddress, false, false);
 }
