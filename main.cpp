@@ -17,6 +17,8 @@
 
 #define TRAP_FLAG 0b100000000llu
 
+#define EXCEPTION_INFORMATION_EXECUTION 8
+
 struct HookData
 {
 	UINT8* modifiedPagesStart;
@@ -109,18 +111,28 @@ ZyanStatus Disassemble(Disassembler* disassembler, UINT_PTR length)
 		length, &disassembler->instruction, disassembler->operands);;
 }
 
+
+// Create separate functions for access violations, breakpoints, and single-steps
 long __stdcall ExceptionHandler(EXCEPTION_POINTERS* exceptionInfo)
 {
 	EXCEPTION_RECORD* exceptionRecord = exceptionInfo->ExceptionRecord;
 	CONTEXT* contextRecord = exceptionInfo->ContextRecord;
 	UINT8* rip = reinterpret_cast<UINT8*>(contextRecord->Rip);
-	
+
+
+
 	if (exceptionRecord->ExceptionCode == EXCEPTION_ACCESS_VIOLATION &&
-		(rip >= (singleHook.hookPageStart - (ZYDIS_MAX_INSTRUCTION_LENGTH - 1)) &&
+		(rip >= (singleHook.hookPageStart - (ZYDIS_MAX_INSTRUCTION_LENGTH - 1)) && // At least 1 byte is on this page (hence the exception)
 			rip < singleHook.hookPageEnd))
 	{
 		if (rip < singleHook.hookPageStart)
 		{
+			if (exceptionRecord->NumberParameters == 0 || 
+				exceptionRecord->ExceptionInformation[0] != EXCEPTION_INFORMATION_EXECUTION)
+			{
+				return EXCEPTION_CONTINUE_SEARCH;
+			}
+
 			if (singleHook.topBoundaryInstructionLength == 0)
 			{
 				Disassembler disassembler;
@@ -160,29 +172,26 @@ long __stdcall ExceptionHandler(EXCEPTION_POINTERS* exceptionInfo)
 		}
 		else
 		{
-
+			contextRecord->Rip = reinterpret_cast<UINT64>(
+				singleHook.originalInstructionStart + (rip - singleHook.hookPageStart));
 		}
 
 		return EXCEPTION_CONTINUE_EXECUTION;
 	}
-	else if (exceptionRecord->ExceptionCode == EXCEPTION_BREAKPOINT)
+	else if (exceptionRecord->ExceptionCode == EXCEPTION_BREAKPOINT &&
+		(rip >= singleHook.modifiedPagesStart && rip < singleHook.originalInstructionEnd))
 	{
 		// Perform additional analysis on rip and the branch to work
-		if (rip >= singleHook.originalInstructionStart && rip < singleHook.originalInstructionEnd)
-		{
-			ParseAndTranslate(&singleHook, singleHook.hookPageStart + (rip - singleHook.originalInstructionStart), true, false);
-			contextRecord->EFlags |= TRAP_FLAG;
-			return EXCEPTION_CONTINUE_EXECUTION;
-		}
+		ParseAndTranslate(&singleHook, singleHook.hookPageStart + (rip - singleHook.originalInstructionStart), true, false);
+		contextRecord->EFlags |= TRAP_FLAG;
+		return EXCEPTION_CONTINUE_EXECUTION;
 	}
-	else if (exceptionRecord->ExceptionCode == EXCEPTION_SINGLE_STEP)
+	else if (exceptionRecord->ExceptionCode == EXCEPTION_SINGLE_STEP &&
+		(rip >= singleHook.modifiedPagesStart && rip < singleHook.originalInstructionEnd))
 	{
-		if (rip >= singleHook.originalInstructionStart && rip < singleHook.originalInstructionEnd)
-		{
-			ParseAndTranslate(&singleHook, singleHook.hookPageStart + (rip - singleHook.originalInstructionStart), false, false);
-			contextRecord->EFlags &= ~(TRAP_FLAG);
-			return EXCEPTION_CONTINUE_EXECUTION;
-		}
+		ParseAndTranslate(&singleHook, singleHook.hookPageStart + (rip - singleHook.originalInstructionStart), false, false);
+		contextRecord->EFlags &= ~(TRAP_FLAG);
+		return EXCEPTION_CONTINUE_EXECUTION;
 	}
 
 	return EXCEPTION_CONTINUE_SEARCH;
