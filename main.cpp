@@ -331,6 +331,11 @@ ZydisRegister GetUnusedGPRegister(ZydisDecodedInstruction* instruction, ZydisDec
 	return ZYDIS_REGISTER_INVALID;
 }
 
+// We need to deal with double branches
+// Ex.
+// jcc (2 bytes)
+// jmp (x bytes)
+//
 ZyanStatus PlaceAbsoluteInstruction(HookData* hookData, UINT64 rip,
 	ZydisDecodedInstruction* instruction, ZydisDecodedOperand* operands)
 {
