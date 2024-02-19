@@ -112,6 +112,7 @@ ZyanStatus Disassemble(Disassembler* disassembler, UINT_PTR length)
 }
 
 
+
 // Create separate functions for access violations, breakpoints, and single-steps
 long __stdcall ExceptionHandler(EXCEPTION_POINTERS* exceptionInfo)
 {
@@ -160,7 +161,6 @@ long __stdcall ExceptionHandler(EXCEPTION_POINTERS* exceptionInfo)
 				memset(singleHook.modifiedPagesStart, 0x90, ZYDIS_MAX_INSTRUCTION_LENGTH + bytesBelow);
 				ParseAndTranslateSingleInstruction(&disassembler, &singleHook, false, true);
 
-				// Modify ParseAndTranslateSingleInstruction to handle the special topInstruction case
 				// Add additional code to the breakpoint handler and single step handler to account for this
 			}
 			else if ((rip + singleHook.topBoundaryInstructionLength) < singleHook.hookPageStart)
@@ -253,6 +253,21 @@ bool PlaceAbsoluteJump(HookData* hookData, UINT64 address)
 	UINT8 instruction[JMP_SIZE_ABS] =
 	{
 		0xFF, 0x25, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x00 , 0x00, 0x00, 0x00, 0x00
+	};
+
+	*(UINT64*)(&instruction[6]) = address;
+
+	return SafeRelocate(hookData, instruction, JMP_SIZE_ABS);
+}
+
+bool PlaceAbsoluteJumpAndBreak(HookData* hookData, UINT64 address)
+{
+	// jmp [rip]
+	// rip -> address
+	UINT8 instruction[JMP_SIZE_ABS] =
+	{
+		0xCC, 0x25, 0x00, 0x00, 0x00, 0x00, 0x00,
 		0x00, 0x00, 0x00 , 0x00, 0x00, 0x00, 0x00
 	};
 
@@ -369,16 +384,31 @@ ZyanStatus PlaceAbsoluteInstruction(HookData* hookData, UINT64 rip,
 			if (ZYAN_FAILED(status))
 				return status;
 
+			// jcc rip+0x2
 			if (!SafeRelocate(hookData, buffer, length))
 				return ZYAN_STATUS_FAILED;
 
-			// jmp 0x10
+			// jmp rip+0xE
 			if (!SafeRelocate(hookData, "\xEB\x0E", 2))
 				return ZYAN_STATUS_FAILED;
 		}
 
-		if (!PlaceAbsoluteJump(hookData, rip + operands[0].imm.value.u))
-			return ZYAN_STATUS_FAILED;
+		UINT8* branchDestination = reinterpret_cast<UINT8*>(rip + operands[0].imm.value.s);
+		if (branchDestination < hookData->hookPageStart || branchDestination >= hookData->hookPageEnd)
+		{
+			if (!PlaceAbsoluteJump(hookData, reinterpret_cast<UINT64>(branchDestination)))
+				return ZYAN_STATUS_FAILED;
+		}
+		else
+		{
+			/* We still need more checks to make sure that the top instruction
+			is considered (probably some changes need to be made below as well) 
+			*/
+
+			//PlaceRelativeJump(hookData, )
+			if (!PlaceAbsoluteJump(hookData, reinterpret_cast<UINT64>(hookData->originalInstructionStart + (branchDestination - hookData->hookPageStart))))
+				return ZYAN_STATUS_FAILED;
+		}
 
 		return ZYAN_STATUS_SUCCESS;
 	}
@@ -461,18 +491,19 @@ bool TranslateRelativeInstruction(HookData* hookData, Disassembler* disassembler
 	ZydisDecodedInstruction* instruction = &disassembler->instruction;
 	ZydisDecodedOperand* operands = disassembler->operands;
 
+	UINT32 offset = disassembler->address - hookData->hookPageStart;
+
 	UINT32 relocationRVA = (UINT32)(hookData->relocationCursor - (topInstruction ? hookData->modifiedPagesStart : (hookData->originalInstructionStart + 
 		(disassembler->address - hookData->hookPageStart)) + JMP_SIZE_32));
 	UINT8 totalLength = 0;
 
 	while (true)
 	{
-		totalLength += instruction->length;
-
 		if (instruction->attributes & ZYDIS_ATTRIB_IS_RELATIVE)
 		{
 			if (ZYAN_FAILED(PlaceAbsoluteInstruction(hookData,
-				(UINT64)disassembler->address + instruction->length, instruction, operands)))
+				(UINT64)disassembler->address + instruction->length, 
+				instruction, operands)))
 			{
 				return false;
 			}
@@ -483,6 +514,8 @@ bool TranslateRelativeInstruction(HookData* hookData, Disassembler* disassembler
 				return false;
 		}
 
+		totalLength += instruction->length;
+
 		if ((disassembler->address + instruction->length) >= hookData->hookPageEnd ||
 			totalLength >= JMP_SIZE_32)
 		{
@@ -490,7 +523,7 @@ bool TranslateRelativeInstruction(HookData* hookData, Disassembler* disassembler
 		}
 		else
 		{
-			if (!topInstruction)
+			if (topInstruction)
 				break;
 
 			NextInstruction(disassembler);
@@ -499,9 +532,10 @@ bool TranslateRelativeInstruction(HookData* hookData, Disassembler* disassembler
 		}
 	}
 
-	PlaceRelativeJump((topInstruction ? hookData->modifiedPagesStart : (hookData->originalInstructionStart + 
-		(disassembler->address - hookData->hookPageStart))), (INT32)relocationRVA);
+	PlaceRelativeJump((topInstruction ? hookData->modifiedPagesStart : 
+		(hookData->originalInstructionStart + offset)), (INT32)relocationRVA);
 
+	// All needs fixing!
 	if (!topInstruction)
 	{
 		ZydisEncoderNopFill(hookData->originalInstructionStart + (disassembler->address -
@@ -534,37 +568,36 @@ bool ParseAndTranslateSingleInstruction(Disassembler* disassembler, HookData* ho
 
 	if (instruction->attributes & ZYDIS_ATTRIB_IS_RELATIVE)
 	{
-		if (instruction->meta.branch_type != ZYDIS_BRANCH_TYPE_NONE)
-		{
-			if (!parseBranch)
-				return true;
+		//if (instruction->meta.branch_type != ZYDIS_BRANCH_TYPE_NONE)
+		//{
+		//	UINT8* mpBranchAddress = mpAddress + 
+		//		instruction->length + disassembler->operands[0].imm.value.s;
 
-			UINT8* mpBranchAddress = mpAddress + 
-				instruction->length + disassembler->operands[0].imm.value.s;
+		//	if ((mpBranchAddress >= hookData->originalInstructionStart &&
+		//		mpBranchAddress < hookData->originalInstructionEnd))
+		//	{
+		//		if (!parseBranch)
+		//			return true;
+		//		// Relative CONDITIONAL branches should be taken care of, at least
+		//		// for opaque predicates, but a better approach that would allow for
+		//		// better analysis would be to leave the breakpoints on the branching
+		//		// instructions themselves, and then single-step to the next instruction,
+		//		// thus letting the hardware do the heavy lifting.
+		//		// There are still extreme circumstances where unconditional branches
+		//		// using other registers as displacement could cause issues (think about it).
 
-			if (mpBranchAddress >= hookData->originalInstructionStart &&
-				mpBranchAddress < hookData->originalInstructionEnd)
-			{
-				// Relative CONDITIONAL branches should be taken care of, at least
-				// for opaque predicates, but a better approach that would allow for
-				// better analysis would be to leave the breakpoints on the branching
-				// instructions themselves, and then single-step to the next instruction,
-				// thus letting the hardware do the heavy lifting.
-				// There are still extreme circumstances where unconditional branches
-				// using other registers as displacement could cause issues (think about it).
+		//		// Potential fix, check for specific circumstances:
+		//		// lea reg1, [rip]
+		//		// add reg1, reg2 
+		//		// unconditional branch [reg1]
+		//		// Translate such a branch so that an absolute address jumping
+		//		// to the original page is calculated. Handle bad branches in the
+		//		// page fault handler.
 
-				// Potential fix, check for specific circumstances:
-				// lea reg1, [rip]
-				// add reg1, reg2 
-				// unconditional branch [reg1]
-				// Translate such a branch so that an absolute address jumping
-				// to the original page is calculated. Handle bad branches in the
-				// page fault handler.
-
-				memcpy(mpAddress, disassembler->address, instruction->length);
-				return true;
-			}
-		}
+		//		memcpy(mpAddress, disassembler->address, instruction->length);
+		//		return true;
+		//	}
+		//}
 
 		if (!TranslateRelativeInstruction(hookData, disassembler, topInstruction))
 			return false;
@@ -610,8 +643,7 @@ bool ParseAndTranslate(HookData* hookData, UINT8* address, bool parseBranch, boo
 
 		// Maybe move this above the ParseAndTranslateSingleInstruction for accurate branch parsing
 		// I think that this will require single-step exceptions
-		if (instruction->mnemonic == ZYDIS_MNEMONIC_INT3 ||
-			instruction->meta.branch_type != ZYDIS_BRANCH_TYPE_NONE)
+		if (instruction->mnemonic == ZYDIS_MNEMONIC_INT3)
 		{
 			break;
 		}
