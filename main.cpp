@@ -19,6 +19,8 @@
 
 #define EXCEPTION_INFORMATION_EXECUTION 8
 
+#define RVA(base, address) reinterpret_cast<UINT64>(base) - reinterpret_cast<UINT64>(address)
+
 struct HookData
 {
 	UINT8* modifiedPagesStart;
@@ -45,6 +47,86 @@ struct Disassembler
 
 void* gExceptionHandlerHandle = nullptr;
 HookData singleHook;
+
+class PFHook
+{
+public:
+	UINT8* mNewPages;
+	UINT8* mOriginalAddress;
+	UINT8* mRelocCursor;
+	UINT64 mNewPageSize;
+
+	PFHook(void* newPages, void* originalAddress, UINT64 newPageSize)
+	{
+		mNewPages = reinterpret_cast<UINT8*>(newPages);
+		mOriginalAddress = reinterpret_cast<UINT8*>(originalAddress);
+		mRelocCursor = mNewPages + PAGE_SIZE + ZYDIS_MAX_INSTRUCTION_LENGTH * 2 + JMP_SIZE_ABS;
+		mNewPageSize = newPageSize;
+	}
+
+	__forceinline UINT8* NewPagesEnd()
+	{
+		return mNewPages + mNewPageSize;
+	}
+
+	__forceinline UINT8* OriginalPage()
+	{
+		return reinterpret_cast<UINT8*>(PAGE_ALIGN(mOriginalAddress));
+	}
+
+	__forceinline UINT8* OriginalPageEnd()
+	{
+		return OriginalPage() + PAGE_SIZE;
+	}
+
+	__forceinline UINT8* NewPagesInstructions()
+	{
+		return mNewPages + ZYDIS_MAX_INSTRUCTION_LENGTH;
+	}
+
+	__forceinline UINT8* NewPagesInstructionsEnd()
+	{
+		return NewPagesInstructions() + PAGE_SIZE;
+	}
+
+	// Might require further changes or an additional function/parameter
+	// for small relative instructions converted to a larger one.
+	__forceinline UINT8* OriginalToNew(void* originalAddress)
+	{
+		return NewPagesInstructions() + (reinterpret_cast<UINT8*>(originalAddress) - OriginalPage());
+	}
+
+	bool Relocate(const void* buffer, size_t length)
+	{
+		if ((mRelocCursor + length) >= NewPagesEnd())
+		{
+			// extend
+			mNewPageSize += PAGE_SIZE;
+
+			UINT8* oldNewPages = mNewPages;
+
+			mNewPages = reinterpret_cast<UINT8*>(VirtualAlloc(nullptr,
+				mNewPageSize, MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE));
+
+			if (!mNewPages)
+				return false;
+
+			memset(mNewPages, 0xCC, mNewPageSize);
+			memcpy(mNewPages, oldNewPages, mNewPageSize - PAGE_SIZE);
+
+			mRelocCursor = mNewPages + (mRelocCursor - oldNewPages);
+
+			VirtualFree(oldNewPages, 0, MEM_RELEASE);
+		}
+
+		memcpy(mRelocCursor, buffer, length);
+		mRelocCursor += length;
+
+		return true;
+	}
+};
+
+PFHook* tempPFHook = nullptr;
 
 // More TODOs: Adding multi-threading support (locks), split code into different files, 
 // read comment about unconditional branches below (somewhere)
@@ -351,7 +433,7 @@ ZydisRegister GetUnusedGPRegister(ZydisDecodedInstruction* instruction, ZydisDec
 // jcc (2 bytes)
 // jmp (x bytes)
 //
-ZyanStatus PlaceAbsoluteInstruction(HookData* hookData, UINT64 rip,
+ZyanStatus PlaceAbsoluteInstruction(PFHook* pfHook, UINT64 rip,
 	ZydisDecodedInstruction* instruction, ZydisDecodedOperand* operands)
 {
 	UINT8 buffer[ZYDIS_MAX_INSTRUCTION_LENGTH];
@@ -486,23 +568,24 @@ ZyanStatus PlaceAbsoluteInstruction(HookData* hookData, UINT64 rip,
 }
 
 // Messy but working (change the hookData->originalInstructionStart +... stuff)
-bool TranslateRelativeInstruction(HookData* hookData, Disassembler* disassembler, bool topInstruction)
+bool TranslateRelativeInstruction(PFHook* pfHook, Disassembler* disassembler, bool topInstruction)
 {
 	ZydisDecodedInstruction* instruction = &disassembler->instruction;
 	ZydisDecodedOperand* operands = disassembler->operands;
 
-	UINT32 offset = disassembler->address - hookData->hookPageStart;
+	INT32 relocationRVA = static_cast<INT32>(pfHook->mRelocCursor - (topInstruction ? 
+		pfHook->mNewPages : pfHook->OriginalToNew(disassembler->address) + JMP_SIZE_32));
 
-	UINT32 relocationRVA = (UINT32)(hookData->relocationCursor - (topInstruction ? hookData->modifiedPagesStart : (hookData->originalInstructionStart + 
-		(disassembler->address - hookData->hookPageStart)) + JMP_SIZE_32));
+	UINT32 offset = static_cast<UINT32>(disassembler->address - pfHook->OriginalPage());
+
 	UINT8 totalLength = 0;
 
 	while (true)
 	{
 		if (instruction->attributes & ZYDIS_ATTRIB_IS_RELATIVE)
 		{
-			if (ZYAN_FAILED(PlaceAbsoluteInstruction(hookData,
-				(UINT64)disassembler->address + instruction->length, 
+			if (ZYAN_FAILED(PlaceAbsoluteInstruction(pfHook,
+				reinterpret_cast<UINT64>(disassembler->address) + instruction->length,
 				instruction, operands)))
 			{
 				return false;
@@ -510,13 +593,13 @@ bool TranslateRelativeInstruction(HookData* hookData, Disassembler* disassembler
 		}
 		else
 		{
-			if (!SafeRelocate(hookData, disassembler->address, instruction->length))
+			if (!pfHook->Relocate(disassembler->address, instruction->length))
 				return false;
 		}
 
 		totalLength += instruction->length;
 
-		if ((disassembler->address + instruction->length) >= hookData->hookPageEnd ||
+		if ((disassembler->address + instruction->length) >= pfHook->OriginalPageEnd() ||
 			totalLength >= JMP_SIZE_32)
 		{
 			break;
@@ -532,18 +615,19 @@ bool TranslateRelativeInstruction(HookData* hookData, Disassembler* disassembler
 		}
 	}
 
-	PlaceRelativeJump((topInstruction ? hookData->modifiedPagesStart : 
-		(hookData->originalInstructionStart + offset)), (INT32)relocationRVA);
+	// Jump to the relocation page from the new page
+	PlaceRelativeJump((topInstruction ? pfHook->mNewPages : 
+		pfHook->NewPagesInstructions() + offset), relocationRVA);
 
 	// All needs fixing!
 	if (!topInstruction)
 	{
-		ZydisEncoderNopFill(hookData->originalInstructionStart + (disassembler->address -
-			hookData->hookPageStart) + JMP_SIZE_32, totalLength - JMP_SIZE_32);
+		ZydisEncoderNopFill(pfHook->NewPagesInstructions() + offset + JMP_SIZE_32, totalLength - JMP_SIZE_32);
 	}
 
-	if (!PlaceRelativeJump(hookData, (INT32)((topInstruction ? (hookData->modifiedPagesStart + JMP_SIZE_32) : (hookData->originalInstructionStart + 
-		(disassembler->address - hookData->hookPageStart) + instruction->length)) - (hookData->relocationCursor + JMP_SIZE_32))))
+	// Jump back to the new page from the relocation page
+	if (!PlaceRelativeJump(pfHook, static_cast<INT32>((topInstruction ? (pfHook->mNewPages + JMP_SIZE_32) : 
+		pfHook->OriginalToNew(disassembler->address) + instruction->length) - (pfHook->mRelocCursor + JMP_SIZE_32))))
 	{
 		return false;
 	}
@@ -560,11 +644,12 @@ bool VerifyInstruction(UINT8* address, UINT8 length)
 	return true;
 }
 
-bool ParseAndTranslateSingleInstruction(Disassembler* disassembler, HookData* hookData, bool parseBranch, bool topInstruction)
+bool ParseAndTranslateSingleInstruction(Disassembler* disassembler, PFHook* pfHook, bool parseBranch, bool topInstruction)
 {
 	ZydisDecodedInstruction* instruction = &disassembler->instruction;
-	UINT8* mpAddress = (topInstruction ? hookData->modifiedPagesStart : 
-		(hookData->originalInstructionStart + (disassembler->address - hookData->hookPageStart)));
+
+	// This may need to be changed
+	UINT8* mpAddress = topInstruction ? pfHook->mNewPages : pfHook->OriginalToNew(disassembler->address);
 
 	if (instruction->attributes & ZYDIS_ATTRIB_IS_RELATIVE)
 	{
@@ -599,7 +684,7 @@ bool ParseAndTranslateSingleInstruction(Disassembler* disassembler, HookData* ho
 		//	}
 		//}
 
-		if (!TranslateRelativeInstruction(hookData, disassembler, topInstruction))
+		if (!TranslateRelativeInstruction(pfHook, disassembler, topInstruction))
 			return false;
 	}
 	else
@@ -610,7 +695,7 @@ bool ParseAndTranslateSingleInstruction(Disassembler* disassembler, HookData* ho
 	return true;
 }
 
-bool ParseAndTranslate(HookData* hookData, UINT8* address, bool parseBranch, bool topInstruction)
+bool ParseAndTranslate(PFHook* pfHook, UINT8* address, bool parseBranch, bool topInstruction)
 {
 	Disassembler disassembler;
 	if (ZYAN_FAILED(InitializeDisassembler(&disassembler,
@@ -619,8 +704,8 @@ bool ParseAndTranslate(HookData* hookData, UINT8* address, bool parseBranch, boo
 		return false;
 	}
 
-	for (; (disassembler.address >= hookData->hookPageStart) && 
-		(disassembler.address < hookData->hookPageEnd);
+	for (; (disassembler.address >= pfHook->OriginalPage()) && 
+		(disassembler.address < pfHook->OriginalPageEnd());
 		NextInstruction(&disassembler))
 	{
 		if (ZYAN_FAILED(Disassemble(&disassembler, 
@@ -632,13 +717,13 @@ bool ParseAndTranslate(HookData* hookData, UINT8* address, bool parseBranch, boo
 		ZydisDecodedInstruction* instruction = &disassembler.instruction;
 
 		// Don't make passes over analyzed instructions
-		if (!VerifyInstruction(hookData->originalInstructionStart + (disassembler.address -
-			hookData->hookPageStart), instruction->length))
+		if (!VerifyInstruction(pfHook->OriginalToNew(
+			disassembler.address), instruction->length))
 		{
 			break;
 		}
 
-		if (!ParseAndTranslateSingleInstruction(&disassembler, hookData, parseBranch, topInstruction))
+		if (!ParseAndTranslateSingleInstruction(&disassembler, pfHook, parseBranch, topInstruction))
 			return false;
 
 		// Maybe move this above the ParseAndTranslateSingleInstruction for accurate branch parsing
@@ -649,10 +734,10 @@ bool ParseAndTranslate(HookData* hookData, UINT8* address, bool parseBranch, boo
 		}
 	}
 
-	if (disassembler.address >= hookData->hookPageEnd)
+	if (disassembler.address >= pfHook->OriginalPageEnd())
 	{
-		PlaceAbsoluteJump(hookData->originalInstructionStart + (disassembler.address -
-			hookData->hookPageStart), (UINT64)disassembler.address);
+		PlaceAbsoluteJump(pfHook->OriginalToNew(disassembler.address), 
+			reinterpret_cast<UINT64>(disassembler.address));
 	}
 
 	return true;
@@ -660,28 +745,17 @@ bool ParseAndTranslate(HookData* hookData, UINT8* address, bool parseBranch, boo
 
 bool InstallHook(void* address)
 {
-	UINT8* modifiedPage = (UINT8*)VirtualAlloc(nullptr, INITIAL_HOOK_SIZE,
+	void* newPage = VirtualAlloc(nullptr, INITIAL_HOOK_SIZE,
 		MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE);
 
-	if (!modifiedPage)
+	if (!newPage)
 		return false;
 
-	memset(modifiedPage, 0xCC, INITIAL_HOOK_SIZE);
+	memset(newPage, 0xCC, INITIAL_HOOK_SIZE);
 
-	singleHook.hookAddress = (UINT8*)address;
-	singleHook.hookPageStart = (UINT8*)(PAGE_ALIGN(address));
-	singleHook.hookPageEnd = singleHook.hookPageStart + PAGE_SIZE;
-	singleHook.modifiedPagesStart = modifiedPage;
-	singleHook.modifiedPagesEnd = modifiedPage + INITIAL_HOOK_SIZE;
+	tempPFHook = new PFHook(newPage, address, INITIAL_HOOK_SIZE);
 
-	singleHook.relocationCursor = modifiedPage + PAGE_SIZE + ZYDIS_MAX_INSTRUCTION_LENGTH * 2 + JMP_SIZE_ABS;
-	singleHook.relocationCursorStart = singleHook.relocationCursor;
-	singleHook.originalInstructionStart = singleHook.modifiedPagesStart + ZYDIS_MAX_INSTRUCTION_LENGTH;
-	singleHook.originalInstructionEnd = singleHook.relocationCursorStart - (ZYDIS_MAX_INSTRUCTION_LENGTH + JMP_SIZE_ABS);
-	singleHook.topBoundaryInstructionLength = 0;
-	singleHook.mpSize = INITIAL_HOOK_SIZE;
-
-	return ParseAndTranslate(&singleHook, singleHook.hookAddress, false, false);
+	return ParseAndTranslate(tempPFHook, tempPFHook->mOriginalAddress, false, false);
 }
 
 void RemoveHook(void* address)
