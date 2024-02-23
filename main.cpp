@@ -31,6 +31,8 @@ PFHook* tempPFHook = nullptr;
 // We should keep a database for translations that fall within these criteria (there are very few)
 //
 
+// We can make top instruction translation easier by decreasing OriginalPage by ZYIDIS_MAX_INSTRUCTION and removing the need for NewPagesInstructions
+
 bool ParseAndTranslate(PFHook* pfHook, UINT8* address, bool parseBranch, bool topInstruction);
 bool ParseAndTranslateSingleInstruction(Disassembler* disassembler, PFHook* pfHook, bool parseBranch, bool topInstruction);
 
@@ -67,6 +69,8 @@ long __stdcall ExceptionHandler(EXCEPTION_POINTERS* exceptionInfo)
 		(rip >= (tempPFHook->OriginalPage() - (ZYDIS_MAX_INSTRUCTION_LENGTH - 1)) && // At least 1 byte is on this page (hence the exception)
 			rip < tempPFHook->OriginalPageEnd()))
 	{
+		// Add translation parsing
+		// 
 		//if (rip < tempPFHook->OriginalPage())
 		//{
 		//	if (exceptionRecord->NumberParameters == 0 || 
@@ -419,6 +423,8 @@ bool TranslateRelativeInstruction(PFHook* pfHook, Disassembler* disassembler, bo
 			NextInstruction(disassembler);
 			if (ZYAN_FAILED(Disassemble(disassembler, ZYDIS_MAX_INSTRUCTION_LENGTH)))
 				return false;
+
+			pfHook->NewTranslation(disassembler->address, offset);
 		}
 	}
 

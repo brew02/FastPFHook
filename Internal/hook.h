@@ -7,6 +7,15 @@
 
 class PFHook
 {
+private:
+	struct Translation
+	{
+		LIST_ENTRY listEntry;
+		UINT8* originalAddress;
+		UINT32 newOffset;
+	};
+
+	LIST_ENTRY mTranslationList;
 public:
 	UINT8* mNewPages;
 	UINT8* mOriginalAddress;
@@ -19,6 +28,7 @@ public:
 		mOriginalAddress = reinterpret_cast<UINT8*>(originalAddress);
 		mRelocCursor = mNewPages + PAGE_SIZE + ZYDIS_MAX_INSTRUCTION_LENGTH * 2 + JMP_SIZE_ABS;
 		mNewPageSize = newPageSize;
+		InitializeListHead(&mTranslationList);
 	}
 
 	__forceinline UINT8* NewPagesEnd()
@@ -58,6 +68,9 @@ public:
 	{
 		return OriginalPage() + (reinterpret_cast<UINT8*>(newAddress) - NewPagesInstructions());
 	}
+
+	void NewTranslation(UINT8* originalAddress, UINT32 newOffset);
+	UINT32 GetTranslationOffset(UINT8* originalAddress);
 
 	bool Relocate(const void* buffer, size_t length);
 

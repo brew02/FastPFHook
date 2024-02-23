@@ -1,5 +1,25 @@
 #include "hook.h"
 
+void PFHook::NewTranslation(UINT8* originalAddress, UINT32 newOffset)
+{
+	Translation* translation = new Translation;
+	translation->originalAddress = originalAddress;
+	translation->newOffset = newOffset;
+	InsertListHead(&mTranslationList, &translation->listEntry);
+}
+
+UINT32 PFHook::GetTranslationOffset(UINT8* originalAddress)
+{
+	for (LIST_ENTRY* entry = mTranslationList.Flink; entry != &mTranslationList; entry = entry->Flink)
+	{
+		Translation* translation = CONTAINING_RECORD(entry, Translation, listEntry);
+		if (translation->originalAddress == originalAddress)
+			return translation->newOffset;
+	}
+
+	return UINT32_MAX;
+}
+
 bool PFHook::Relocate(const void* buffer, size_t length)
 {
 	if ((mRelocCursor + length) >= NewPagesEnd())

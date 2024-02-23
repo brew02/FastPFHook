@@ -15,3 +15,18 @@
 #define EXCEPTION_INFORMATION_EXECUTION 8
 
 #define RVA(base, address) reinterpret_cast<UINT64>(base) - reinterpret_cast<UINT64>(address)
+
+inline void InitializeListHead(LIST_ENTRY* listHead)
+{
+	listHead->Flink = listHead;
+	listHead->Blink = listHead;
+}
+
+inline void InsertListHead(LIST_ENTRY* listHead, LIST_ENTRY* entry)
+{
+	LIST_ENTRY* oldFlink = listHead->Flink;
+	listHead->Flink = entry;
+	entry->Flink = oldFlink;
+	entry->Blink = listHead;
+	oldFlink->Blink = entry;
+}
