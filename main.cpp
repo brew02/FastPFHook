@@ -159,7 +159,7 @@ ZydisRegister GetUnusedGPRegister(ZydisDecodedInstruction* instruction, ZydisDec
 		ZYDIS_REGISTER_R12, ZYDIS_REGISTER_R13, ZYDIS_REGISTER_R14, ZYDIS_REGISTER_R15
 	};
 
-	for (UINT8 i = 0; i < instruction->operand_count; i++)
+	for (UINT8 i = 0; i < instruction->operand_count_visible; i++)
 	{
 		ZydisDecodedOperand* operand = &operands[i];
 		ZydisRegister reg1 = ZYDIS_REGISTER_INVALID;
@@ -189,7 +189,7 @@ ZydisRegister GetUnusedGPRegister(ZydisDecodedInstruction* instruction, ZydisDec
 	return ZYDIS_REGISTER_INVALID;
 }
 
-UINT8* GetBranchAddress(Disassembler* disassembler, UINT8* newRIP)
+UINT8* GetBranchAddress(Disassembler* disassembler, UINT8* newRIP, ZydisOperandType* type)
 {
 	UINT8* originalRIP = disassembler->address + disassembler->instruction.length;
 
@@ -199,11 +199,13 @@ UINT8* GetBranchAddress(Disassembler* disassembler, UINT8* newRIP)
 		if (operand->type == ZYDIS_OPERAND_TYPE_IMMEDIATE &&
 			operand->imm.is_relative)
 		{
+			*type = operand->type;
 			return newRIP + operand->imm.value.s;
 		}
 		else if (operand->type == ZYDIS_OPERAND_TYPE_MEMORY &&
 			operand->mem.disp.has_displacement)
 		{
+			*type = operand->type;
 			return *reinterpret_cast<UINT8**>(originalRIP + operand->mem.disp.value);
 		}
 	}
@@ -264,8 +266,9 @@ ZyanStatus PlaceAbsoluteInstruction(PFHook* pfHook, UINT64 rip,
 				return ZYAN_STATUS_FAILED;
 		}
 
-		UINT8* branchAddress = GetBranchAddress(disassembler, pfHook->OriginalToNew(reinterpret_cast<void*>(rip)));
-		// Same drill as below (see below)
+		ZydisOperandType type = ZYDIS_OPERAND_TYPE_UNUSED;
+		UINT8* branchAddress = GetBranchAddress(disassembler, pfHook->OriginalToNew(reinterpret_cast<void*>(rip)), &type);
+		// Same drill as below (see later function)
 		if (!branchAddress)
 			return ZYAN_STATUS_FAILED;
 
@@ -273,7 +276,7 @@ ZyanStatus PlaceAbsoluteInstruction(PFHook* pfHook, UINT64 rip,
 		if ((branchAddress < pfHook->mNewPages &&
 			branchAddress >= pfHook->NewPagesInstructionsEnd()))
 		{
-			if (operands[0].type == ZYDIS_OPERAND_TYPE_IMMEDIATE)
+			if (type == ZYDIS_OPERAND_TYPE_IMMEDIATE)
 			{
 				if (!pfHook->PlaceAbsoluteJump(reinterpret_cast<UINT64>(pfHook->NewToOriginal(branchAddress))))
 					return ZYAN_STATUS_FAILED;
@@ -450,7 +453,8 @@ bool ParseAndTranslateSingleInstruction(Disassembler* disassembler, PFHook* pfHo
 	{
 		if (instruction->meta.branch_type != ZYDIS_BRANCH_TYPE_NONE)
 		{
-			UINT8* branchAddress = GetBranchAddress(disassembler, mpAddress + instruction->length);
+			ZydisOperandType type = ZYDIS_OPERAND_TYPE_UNUSED;
+			UINT8* branchAddress = GetBranchAddress(disassembler, mpAddress + instruction->length, &type);
 			// This needs to account for other types of branches as well, but it works for now
 			if (!branchAddress)
 				return false;
