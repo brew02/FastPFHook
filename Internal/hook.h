@@ -25,6 +25,16 @@ public:
 	UINT8* mRelocCursor;
 	UINT64 mNewPageSize;
 
+	void NewTranslation(UINT8* originalAddress, UINT32 newOffset);
+	UINT32 GetTranslationOffset(UINT8* originalAddress);
+
+	bool Relocate(const void* buffer, size_t length);
+
+	bool PlaceRelativeJump(INT32 offset);
+	bool PlaceAbsoluteJump(UINT64 address);
+	bool PlaceAbsoluteJumpAndBreak(UINT64 address);
+	bool PlaceManualReturnAddress(UINT64 returnAddress);
+
 	PFHook(void* newPages, void* originalAddress, UINT64 newPageSize)
 	{
 		mNewPages = reinterpret_cast<UINT8*>(newPages);
@@ -70,14 +80,4 @@ public:
 	{
 		return OriginalPageInstructions() + (reinterpret_cast<UINT8*>(newAddress) - mNewPages);
 	}
-
-	void NewTranslation(UINT8* originalAddress, UINT32 newOffset);
-	UINT32 GetTranslationOffset(UINT8* originalAddress);
-
-	bool Relocate(const void* buffer, size_t length);
-
-	bool PlaceRelativeJump(INT32 offset);
-	bool PlaceAbsoluteJump(UINT64 address);
-	bool PlaceAbsoluteJumpAndBreak(UINT64 address);
-	bool PlaceManualReturnAddress(UINT64 returnAddress);
 };
