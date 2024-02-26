@@ -17,7 +17,7 @@ UINT32 PFHook::GetTranslationOffset(UINT8* originalAddress)
 			return translation->newOffset;
 	}
 
-	return UINT32_MAX;
+	return static_cast<UINT32>(originalAddress - OriginalPageInstructions());
 }
 
 bool PFHook::Relocate(const void* buffer, size_t length)

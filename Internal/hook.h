@@ -5,6 +5,8 @@
 
 #include "common.h"
 
+#define BOUNDARY_INSTRUCTION_LENGTH (ZYDIS_MAX_INSTRUCTION_LENGTH - 1)
+
 class PFHook
 {
 private:
@@ -16,6 +18,7 @@ private:
 	};
 
 	LIST_ENTRY mTranslationList;
+
 public:
 	UINT8* mNewPages;
 	UINT8* mOriginalAddress;
@@ -26,7 +29,7 @@ public:
 	{
 		mNewPages = reinterpret_cast<UINT8*>(newPages);
 		mOriginalAddress = reinterpret_cast<UINT8*>(originalAddress);
-		mRelocCursor = mNewPages + PAGE_SIZE + ZYDIS_MAX_INSTRUCTION_LENGTH * 2 + JMP_SIZE_ABS;
+		mRelocCursor = mNewPages + PAGE_SIZE + BOUNDARY_INSTRUCTION_LENGTH * 2 + JMP_SIZE_ABS;
 		mNewPageSize = newPageSize;
 		InitializeListHead(&mTranslationList);
 	}
@@ -36,37 +39,36 @@ public:
 		return mNewPages + mNewPageSize;
 	}
 
-	__forceinline UINT8* OriginalPage()
+	__forceinline UINT8* NewPagesInstructionsEnd()
 	{
-		return reinterpret_cast<UINT8*>(PAGE_ALIGN(mOriginalAddress));
+		return mNewPages + BOUNDARY_INSTRUCTION_LENGTH + PAGE_SIZE;
 	}
 
 	__forceinline UINT8* OriginalPageEnd()
 	{
-		return OriginalPage() + PAGE_SIZE;
+		return reinterpret_cast<UINT8*>(PAGE_ALIGN(mOriginalAddress)) + PAGE_SIZE;
 	}
 
-	__forceinline UINT8* NewPagesInstructions()
+	__forceinline UINT8* OriginalPageInstructions()
 	{
-		return mNewPages + ZYDIS_MAX_INSTRUCTION_LENGTH;
-	}
-
-	__forceinline UINT8* NewPagesInstructionsEnd()
-	{
-		return NewPagesInstructions() + PAGE_SIZE;
+		return reinterpret_cast<UINT8*>(PAGE_ALIGN(
+			mOriginalAddress)) - BOUNDARY_INSTRUCTION_LENGTH;
 	}
 
 	// Might require further changes or an additional function/parameter
 	// for small relative instructions converted to a larger one.
-	__forceinline UINT8* OriginalToNew(void* originalAddress)
+	__forceinline UINT8* OriginalToNew(void* originalAddress, bool useTranslations = false)
 	{
-		return NewPagesInstructions() + (reinterpret_cast<UINT8*>(originalAddress) - OriginalPage());
+		if (useTranslations)
+			return mNewPages + GetTranslationOffset(reinterpret_cast<UINT8*>(originalAddress));
+		else
+			return mNewPages + (reinterpret_cast<UINT8*>(originalAddress) - OriginalPageInstructions());
 	}
 
 	// This might need changes for top instruction support
 	__forceinline UINT8* NewToOriginal(void* newAddress)
 	{
-		return OriginalPage() + (reinterpret_cast<UINT8*>(newAddress) - NewPagesInstructions());
+		return OriginalPageInstructions() + (reinterpret_cast<UINT8*>(newAddress) - mNewPages);
 	}
 
 	void NewTranslation(UINT8* originalAddress, UINT32 newOffset);
