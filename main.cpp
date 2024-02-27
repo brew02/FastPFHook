@@ -273,8 +273,7 @@ ZyanStatus PlaceAbsoluteInstruction(PFHook* pfHook, UINT64 rip,
 			return ZYAN_STATUS_FAILED;
 
 		// This needs to be simplified
-		if ((branchAddress < pfHook->mNewPages &&
-			branchAddress >= pfHook->NewPagesInstructionsEnd()))
+		if (branchAddress < pfHook->mNewPages || branchAddress >= pfHook->NewPagesInstructionsEnd())
 		{
 			if (type == ZYDIS_OPERAND_TYPE_IMMEDIATE)
 			{
