@@ -24,14 +24,8 @@ PFHook* tempPFHook = nullptr;
 // read comment about unconditional branches below (somewhere)
 // Use classes for the Disassembler struct and the HookData struct
 
-// Short relative instructions will cause a problem with this current method
-// because a direct translation from the original page to the modified page
-// will cause the instruction pointer to be in the middle of one of our jumps.
-// 
-// We should keep a database for translations that fall within these criteria (there are very few)
-//
-
-// We can make top instruction translation easier by decreasing OriginalPage by ZYIDIS_MAX_INSTRUCTION and removing the need for NewPagesInstructions
+// We may need to make some changes to the conditions that we check for the top and bottom
+// instruction on the new page.
 
 bool ParseAndTranslate(PFHook* pfHook, UINT8* address, bool parseBranch);
 bool ParseAndTranslateSingleInstruction(Disassembler* disassembler, PFHook* pfHook, bool parseBranch);
@@ -74,6 +68,8 @@ long __stdcall ExceptionHandler(EXCEPTION_POINTERS* exceptionInfo)
 
 		return EXCEPTION_CONTINUE_EXECUTION;
 	}
+	// There are some bugs here or with the branch handling that
+	// deviat from intended behavior, but the program still works.
 	else if (exceptionRecord->ExceptionCode == EXCEPTION_BREAKPOINT &&
 		(rip >= tempPFHook->mNewPages && rip < tempPFHook->NewPagesInstructionsEnd()))
 	{
@@ -83,10 +79,13 @@ long __stdcall ExceptionHandler(EXCEPTION_POINTERS* exceptionInfo)
 
 		return EXCEPTION_CONTINUE_EXECUTION;
 	}
-	else if (exceptionRecord->ExceptionCode == EXCEPTION_SINGLE_STEP &&
-		(rip >= tempPFHook->mNewPages && rip < tempPFHook->NewPagesInstructionsEnd())) 
+	else if (exceptionRecord->ExceptionCode == EXCEPTION_SINGLE_STEP) 
 	{
-		ParseAndTranslate(tempPFHook, tempPFHook->NewToOriginal(rip), false);
+		if (rip >= tempPFHook->mNewPages && rip < tempPFHook->NewPagesInstructionsEnd())
+		{
+			ParseAndTranslate(tempPFHook, tempPFHook->NewToOriginal(rip), false);
+		}
+		
 		contextRecord->EFlags &= ~(TRAP_FLAG);
 
 		return EXCEPTION_CONTINUE_EXECUTION;
@@ -189,6 +188,7 @@ ZydisRegister GetUnusedGPRegister(ZydisDecodedInstruction* instruction, ZydisDec
 	return ZYDIS_REGISTER_INVALID;
 }
 
+// We need to handle the two other cases properly as well
 UINT8* GetBranchAddress(Disassembler* disassembler, UINT8* newRIP, ZydisOperandType* type)
 {
 	UINT8* originalRIP = disassembler->address + disassembler->instruction.length;
@@ -213,7 +213,7 @@ UINT8* GetBranchAddress(Disassembler* disassembler, UINT8* newRIP, ZydisOperandT
 	return nullptr;
 }
 
-// We need to deal with double branches
+// We need to deal with double branches (place breakpoints on them properly)
 // Ex.
 // jcc (2 bytes)
 // jmp (x bytes)
@@ -236,6 +236,9 @@ ZyanStatus PlaceAbsoluteInstruction(PFHook* pfHook, UINT64 rip,
 
 	if (instruction->meta.branch_type != ZYDIS_BRANCH_TYPE_NONE)
 	{
+		// We should improve call instructions by making the return
+		// address the next instruction on the new page instead
+		// of using a jmp
 		if (instruction->meta.category == ZYDIS_CATEGORY_CALL)
 		{
 			if (!pfHook->PlaceManualReturnAddress(reinterpret_cast<UINT64>(
@@ -266,15 +269,16 @@ ZyanStatus PlaceAbsoluteInstruction(PFHook* pfHook, UINT64 rip,
 				return ZYAN_STATUS_FAILED;
 		}
 
+		// This needs to be cleaned up
 		ZydisOperandType type = ZYDIS_OPERAND_TYPE_UNUSED;
 		UINT8* branchAddress = GetBranchAddress(disassembler, pfHook->OriginalToNew(reinterpret_cast<void*>(rip)), &type);
 		// Same drill as below (see later function)
 		if (!branchAddress)
 			return ZYAN_STATUS_FAILED;
 
-		// This needs to be simplified
 		if (branchAddress < pfHook->mNewPages || branchAddress >= pfHook->NewPagesInstructionsEnd())
 		{
+			// Deal with the other two branch types properly
 			if (type == ZYDIS_OPERAND_TYPE_IMMEDIATE)
 			{
 				if (!pfHook->PlaceAbsoluteJump(reinterpret_cast<UINT64>(pfHook->NewToOriginal(branchAddress))))
@@ -288,6 +292,7 @@ ZyanStatus PlaceAbsoluteInstruction(PFHook* pfHook, UINT64 rip,
 		}
 		else
 		{
+			// Make this a relative jmp
 			if (!pfHook->PlaceAbsoluteJump(reinterpret_cast<UINT64>(branchAddress)))
 				return ZYAN_STATUS_FAILED;
 		}
@@ -405,10 +410,6 @@ bool TranslateRelativeInstruction(PFHook* pfHook, Disassembler* disassembler)
 		}
 		else
 		{
-			// we may still need this
-			/*if (topInstruction)
-				break;*/
-
 			NextInstruction(disassembler);
 			if (ZYAN_FAILED(Disassemble(disassembler, ZYDIS_MAX_INSTRUCTION_LENGTH)))
 				return false;
@@ -444,8 +445,6 @@ bool VerifyInstruction(UINT8* address, UINT8 length)
 bool ParseAndTranslateSingleInstruction(Disassembler* disassembler, PFHook* pfHook, bool parseBranch)
 {
 	ZydisDecodedInstruction* instruction = &disassembler->instruction;
-
-	// This may need to be changed
 	UINT8* mpAddress = pfHook->OriginalToNew(disassembler->address);
 
 	if (instruction->attributes & ZYDIS_ATTRIB_IS_RELATIVE)
@@ -454,14 +453,14 @@ bool ParseAndTranslateSingleInstruction(Disassembler* disassembler, PFHook* pfHo
 		{
 			ZydisOperandType type = ZYDIS_OPERAND_TYPE_UNUSED;
 			UINT8* branchAddress = GetBranchAddress(disassembler, mpAddress + instruction->length, &type);
-			// This needs to account for other types of branches as well, but it works for now
 			if (!branchAddress)
 				return false;
 
-			// Add support for the top instruction
 			if ((branchAddress >= pfHook->mNewPages &&
-				branchAddress < pfHook->NewPagesInstructionsEnd()) && parseBranch)
+				branchAddress < pfHook->NewPagesInstructionsEnd()))
 			{
+				if (!parseBranch)
+					return false;
 				// Relative CONDITIONAL branches should be taken care of, at least
 				// for opaque predicates, but a better approach that would allow for
 				// better analysis would be to leave the breakpoints on the branching
@@ -527,6 +526,7 @@ bool ParseAndTranslate(PFHook* pfHook, UINT8* address, bool parseBranch)
 
 		// Maybe move this above the ParseAndTranslateSingleInstruction for accurate branch parsing
 		// I think that this will require single-step exceptions
+		// (This requires this check: (instruction->meta.branch_type != ZYDIS_BRANCH_TYPE_NONE && !parseBranch))
 		if (instruction->mnemonic == ZYDIS_MNEMONIC_INT3)
 		{
 			break;
