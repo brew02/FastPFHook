@@ -70,6 +70,8 @@ long __stdcall ExceptionHandler(EXCEPTION_POINTERS* exceptionInfo)
 	}
 	// There are some bugs here or with the branch handling that
 	// deviat from intended behavior, but the program still works.
+	// If we translate a relative instruction to an absolute one, we don't need to 
+	// single step it or use breakpoints
 	else if (exceptionRecord->ExceptionCode == EXCEPTION_BREAKPOINT &&
 		(rip >= tempPFHook->mNewPages && rip < tempPFHook->NewPagesInstructionsEnd()))
 	{
@@ -135,7 +137,7 @@ void PlaceManualReturnAddress(void* destination, UINT64 returnAddress)
 }
 
 // Credits to btbd (SMAP)
-// Note: ZYDIS_REGISTER_INVALID is a custom definition
+// Note: ZYDIS_REGISTER_INVALID is a custom definition added to the enum
 ZydisRegister ConvertGPRegisterToIndex(ZydisRegister reg)
 {
 	if (reg > ZYDIS_REGISTER_R15 || reg < ZYDIS_REGISTER_AL)
