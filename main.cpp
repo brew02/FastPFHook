@@ -70,6 +70,9 @@ long __stdcall ExceptionHandler(EXCEPTION_POINTERS* exceptionInfo)
 
 		return EXCEPTION_CONTINUE_EXECUTION;
 	}
+
+	// We may want to be more clear as to why we are saving the originalRIP and how we use it
+	// 
 	// There are some bugs here or with the branch handling that
 	// deviat from intended behavior, but the program still works.
 	// If we translate a relative instruction to an absolute one, we don't need to 
@@ -77,20 +80,25 @@ long __stdcall ExceptionHandler(EXCEPTION_POINTERS* exceptionInfo)
 	else if (exceptionRecord->ExceptionCode == EXCEPTION_BREAKPOINT &&
 		(rip >= tempPFHook->mNewPages && rip < tempPFHook->NewPagesInstructionsEnd()))
 	{
+		UINT8* originalRIP = tempPFHook->NewToOriginal(rip);
 		// Perform additional analysis on rip and the branch to work
-		ParseAndTranslate(tempPFHook, tempPFHook->NewToOriginal(rip), true);
+		ParseAndTranslate(tempPFHook, originalRIP, true);
 		contextRecord->EFlags |= TRAP_FLAG;
+		contextRecord->Rip = reinterpret_cast<UINT64>(tempPFHook->OriginalToNew(originalRIP, true));
 
 		return EXCEPTION_CONTINUE_EXECUTION;
 	}
 	else if (exceptionRecord->ExceptionCode == EXCEPTION_SINGLE_STEP) 
 	{
+		UINT8* originalRIP = tempPFHook->NewToOriginal(rip);
+
 		if (rip >= tempPFHook->mNewPages && rip < tempPFHook->NewPagesInstructionsEnd())
 		{
 			ParseAndTranslate(tempPFHook, tempPFHook->NewToOriginal(rip), false);
 		}
 		
 		contextRecord->EFlags &= ~(TRAP_FLAG);
+		contextRecord->Rip = reinterpret_cast<UINT64>(tempPFHook->OriginalToNew(originalRIP, true));
 
 		return EXCEPTION_CONTINUE_EXECUTION;
 	}
