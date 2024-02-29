@@ -27,13 +27,13 @@ PFHook* tempPFHook = nullptr;
 // We may need to make some changes to the conditions that we check for the top and bottom
 // instruction on the new page.
 
-bool ParseAndTranslate(PFHook* pfHook, UINT8* address, bool parseBranch);
-bool ParseAndTranslateSingleInstruction(Disassembler* disassembler, PFHook* pfHook, bool parseBranch);
+bool ParseAndTranslate(PFHook* hook, UINT8* address, bool parseBranch);
+bool ParseAndTranslateSingleInstruction(Disassembler* disassembler, PFHook* hook, bool parseBranch);
 
-ZyanStatus InitializeDisassembler(Disassembler* disassembler, ZydisMachineMode machineMode, ZydisStackWidth stackWidth, UINT8* address)
+ZyanStatus InitializeDisassembler(Disassembler* disassembler, ZydisMachineMode machineMode, ZydisStackWidth stackWidth, void* address)
 {
 	ZeroMemory(disassembler, sizeof(Disassembler));
-	disassembler->address = address;
+	disassembler->address = reinterpret_cast<UINT8*>(address);
 	return ZydisDecoderInit(&disassembler->decoder, machineMode, stackWidth);
 }
 
@@ -45,8 +45,10 @@ __forceinline void NextInstruction(Disassembler* disassembler)
 ZyanStatus Disassemble(Disassembler* disassembler, UINT_PTR length)
 {
 	return ZydisDecoderDecodeFull(&disassembler->decoder, disassembler->address,
-		length, &disassembler->instruction, disassembler->operands);;
+		length, &disassembler->instruction, disassembler->operands);
 }
+
+
 
 // Create separate functions for access violations, breakpoints, and single-steps
 long __stdcall ExceptionHandler(EXCEPTION_POINTERS* exceptionInfo)
@@ -190,6 +192,7 @@ ZydisRegister GetUnusedGPRegister(ZydisDecodedInstruction* instruction, ZydisDec
 	return ZYDIS_REGISTER_INVALID;
 }
 
+// Change this so that we don't supply our own RIP (just use the originalRIP)
 // We need to handle the two other cases properly as well
 UINT8* GetBranchAddress(Disassembler* disassembler, UINT8* newRIP, ZydisOperandType* type)
 {
@@ -220,7 +223,7 @@ UINT8* GetBranchAddress(Disassembler* disassembler, UINT8* newRIP, ZydisOperandT
 // jcc (2 bytes)
 // jmp (x bytes)
 //
-ZyanStatus PlaceAbsoluteInstruction(PFHook* pfHook, UINT64 rip,
+ZyanStatus PlaceAbsoluteInstruction(PFHook* hook, UINT64 rip,
 	Disassembler* disassembler)
 {
 	ZydisDecodedInstruction* instruction = &disassembler->instruction;
@@ -243,8 +246,8 @@ ZyanStatus PlaceAbsoluteInstruction(PFHook* pfHook, UINT64 rip,
 		// of using a jmp
 		if (instruction->meta.category == ZYDIS_CATEGORY_CALL)
 		{
-			if (!pfHook->PlaceManualReturnAddress(reinterpret_cast<UINT64>(
-				pfHook->mRelocCursor + MANUAL_RET_SIZE + JMP_SIZE_ABS)))
+			if (!hook->PlaceManualReturnAddress(reinterpret_cast<UINT64>(
+				hook->mRelocCursor + MANUAL_RET_SIZE + JMP_SIZE_ABS)))
 			{
 				return ZYAN_STATUS_FAILED;
 			}
@@ -263,39 +266,39 @@ ZyanStatus PlaceAbsoluteInstruction(PFHook* pfHook, UINT64 rip,
 				return status;
 
 			// jcc rip+0x2
-			if (!pfHook->Relocate(buffer, length))
+			if (!hook->Relocate(buffer, length))
 				return ZYAN_STATUS_FAILED;
 
 			// jmp rip+0xE
-			if (!pfHook->Relocate("\xEB\x0E", 2))
+			if (!hook->Relocate("\xEB\x0E", 2))
 				return ZYAN_STATUS_FAILED;
 		}
 
 		// This needs to be cleaned up
 		ZydisOperandType type = ZYDIS_OPERAND_TYPE_UNUSED;
-		UINT8* branchAddress = GetBranchAddress(disassembler, pfHook->OriginalToNew(reinterpret_cast<void*>(rip)), &type);
+		UINT8* branchAddress = GetBranchAddress(disassembler, hook->OriginalToNew(reinterpret_cast<void*>(rip)), &type);
 		// Same drill as below (see later function)
 		if (!branchAddress)
 			return ZYAN_STATUS_FAILED;
 
-		if (branchAddress < pfHook->mNewPages || branchAddress >= pfHook->NewPagesInstructionsEnd())
+		if (branchAddress < hook->mNewPages || branchAddress >= hook->NewPagesInstructionsEnd())
 		{
 			// Deal with the other two branch types properly
 			if (type == ZYDIS_OPERAND_TYPE_IMMEDIATE)
 			{
-				if (!pfHook->PlaceAbsoluteJump(reinterpret_cast<UINT64>(pfHook->NewToOriginal(branchAddress))))
+				if (!hook->PlaceAbsoluteJump(reinterpret_cast<UINT64>(hook->NewToOriginal(branchAddress))))
 					return ZYAN_STATUS_FAILED;
 			}
 			else 
 			{
-				if (!pfHook->PlaceAbsoluteJump(reinterpret_cast<UINT64>(branchAddress)))
+				if (!hook->PlaceAbsoluteJump(reinterpret_cast<UINT64>(branchAddress)))
 					return ZYAN_STATUS_FAILED;
 			}
 		}
 		else
 		{
 			// Make this a relative jmp
-			if (!pfHook->PlaceAbsoluteJump(reinterpret_cast<UINT64>(branchAddress)))
+			if (!hook->PlaceAbsoluteJump(reinterpret_cast<UINT64>(branchAddress)))
 				return ZYAN_STATUS_FAILED;
 		}
 
@@ -312,7 +315,7 @@ ZyanStatus PlaceAbsoluteInstruction(PFHook* pfHook, UINT64 rip,
 	if (ZYAN_FAILED(status))
 		return status;
 
-	if (!pfHook->Relocate(buffer, length))
+	if (!hook->Relocate(buffer, length))
 		return ZYAN_STATUS_FAILED;
 
 	length = sizeof(buffer);
@@ -329,7 +332,7 @@ ZyanStatus PlaceAbsoluteInstruction(PFHook* pfHook, UINT64 rip,
 	if (ZYAN_FAILED(status))
 		return status;
 
-	if (!pfHook->Relocate(buffer, length))
+	if (!hook->Relocate(buffer, length))
 		return ZYAN_STATUS_FAILED;
 
 	length = sizeof(buffer);
@@ -352,7 +355,7 @@ ZyanStatus PlaceAbsoluteInstruction(PFHook* pfHook, UINT64 rip,
 	if (ZYAN_FAILED(status))
 		return status;
 
-	if (!pfHook->Relocate(buffer, length))
+	if (!hook->Relocate(buffer, length))
 		return ZYAN_STATUS_FAILED;
 
 	length = sizeof(buffer);
@@ -368,21 +371,21 @@ ZyanStatus PlaceAbsoluteInstruction(PFHook* pfHook, UINT64 rip,
 	if (ZYAN_FAILED(status))
 		return status;
 
-	if (!pfHook->Relocate(buffer, length))
+	if (!hook->Relocate(buffer, length))
 		return ZYAN_STATUS_FAILED;
 
 	return true;
 }
 
 // Messy but working (change the hookData->originalInstructionStart +... stuff)
-bool TranslateRelativeInstruction(PFHook* pfHook, Disassembler* disassembler)
+bool TranslateRelativeInstruction(PFHook* hook, Disassembler* disassembler)
 {
 	ZydisDecodedInstruction* instruction = &disassembler->instruction;
 
-	INT32 relocationRVA = static_cast<INT32>(pfHook->mRelocCursor - 
-		(pfHook->OriginalToNew(disassembler->address) + JMP_SIZE_32));
+	INT32 relocationRVA = static_cast<INT32>(hook->mRelocCursor - 
+		(hook->OriginalToNew(disassembler->address) + JMP_SIZE_32));
 
-	UINT32 offset = static_cast<UINT32>(disassembler->address - pfHook->OriginalPageInstructions());
+	UINT32 offset = static_cast<UINT32>(disassembler->address - hook->OriginalPageInstructions());
 
 	UINT8 totalLength = 0;
 
@@ -390,7 +393,7 @@ bool TranslateRelativeInstruction(PFHook* pfHook, Disassembler* disassembler)
 	{
 		if (instruction->attributes & ZYDIS_ATTRIB_IS_RELATIVE)
 		{
-			if (ZYAN_FAILED(PlaceAbsoluteInstruction(pfHook,
+			if (ZYAN_FAILED(PlaceAbsoluteInstruction(hook,
 				reinterpret_cast<UINT64>(disassembler->address) + instruction->length,
 				disassembler)))
 			{
@@ -399,13 +402,13 @@ bool TranslateRelativeInstruction(PFHook* pfHook, Disassembler* disassembler)
 		}
 		else
 		{
-			if (!pfHook->Relocate(disassembler->address, instruction->length))
+			if (!hook->Relocate(disassembler->address, instruction->length))
 				return false;
 		}
 
 		totalLength += instruction->length;
 
-		if ((disassembler->address + instruction->length) >= pfHook->OriginalPageEnd() ||
+		if ((disassembler->address + instruction->length) >= hook->OriginalPageEnd() ||
 			totalLength >= JMP_SIZE_32)
 		{
 			break;
@@ -416,23 +419,42 @@ bool TranslateRelativeInstruction(PFHook* pfHook, Disassembler* disassembler)
 			if (ZYAN_FAILED(Disassemble(disassembler, ZYDIS_MAX_INSTRUCTION_LENGTH)))
 				return false;
 
-			pfHook->NewTranslation(disassembler->address, offset);
+			hook->NewTranslation(disassembler->address, offset);
 		}
 	}
 
 	// Jump to the relocation page from the new page
-	PlaceRelativeJump(pfHook->mNewPages + offset, relocationRVA);
+	PlaceRelativeJump(hook->mNewPages + offset, relocationRVA);
 
-	ZydisEncoderNopFill(pfHook->mNewPages + offset + JMP_SIZE_32, static_cast<ZyanUSize>(totalLength) - JMP_SIZE_32);
+	ZydisEncoderNopFill(hook->mNewPages + offset + JMP_SIZE_32, static_cast<ZyanUSize>(totalLength) - JMP_SIZE_32);
 
 	// Jump back to the new page from the relocation page
-	if (!pfHook->PlaceRelativeJump(static_cast<INT32>(pfHook->OriginalToNew(
-		disassembler->address) + instruction->length - (pfHook->mRelocCursor + JMP_SIZE_32))))
+	if (!hook->PlaceRelativeJump(static_cast<INT32>(hook->OriginalToNew(
+		disassembler->address) + instruction->length - (hook->mRelocCursor + JMP_SIZE_32))))
 	{
 		return false;
 	}
 
 	return true;
+}
+
+UINT8 GetInstructionLengthAtAddress(void* address)
+{
+	Disassembler disassembler;
+	if (ZYAN_FAILED(InitializeDisassembler(
+		&disassembler, ZYDIS_MACHINE_MODE_LONG_64, 
+		ZYDIS_STACK_WIDTH_64, address)))
+	{
+		return 0;
+	}
+
+	if (ZYAN_FAILED(ZydisDecoderDecodeInstruction(&disassembler.decoder, nullptr,
+		address, ZYDIS_MAX_INSTRUCTION_LENGTH, &disassembler.instruction)))
+	{
+		return 0;
+	}
+	
+	return disassembler.instruction.length;
 }
 
 bool VerifyInstruction(UINT8* address, UINT8 length)
@@ -444,10 +466,10 @@ bool VerifyInstruction(UINT8* address, UINT8 length)
 	return true;
 }
 
-bool ParseAndTranslateSingleInstruction(Disassembler* disassembler, PFHook* pfHook, bool parseBranch)
+bool ParseAndTranslateSingleInstruction(Disassembler* disassembler, PFHook* hook, bool parseBranch)
 {
 	ZydisDecodedInstruction* instruction = &disassembler->instruction;
-	UINT8* mpAddress = pfHook->OriginalToNew(disassembler->address);
+	UINT8* mpAddress = hook->OriginalToNew(disassembler->address);
 
 	if (instruction->attributes & ZYDIS_ATTRIB_IS_RELATIVE)
 	{
@@ -458,8 +480,8 @@ bool ParseAndTranslateSingleInstruction(Disassembler* disassembler, PFHook* pfHo
 			if (!branchAddress)
 				return false;
 
-			if ((branchAddress >= pfHook->mNewPages &&
-				branchAddress < pfHook->NewPagesInstructionsEnd()))
+			if ((branchAddress >= hook->mNewPages &&
+				branchAddress < hook->NewPagesInstructionsEnd()))
 			{
 				if (!parseBranch)
 					return false;
@@ -470,6 +492,7 @@ bool ParseAndTranslateSingleInstruction(Disassembler* disassembler, PFHook* pfHo
 				// thus letting the hardware do the heavy lifting.
 				// There are still extreme circumstances where unconditional branches
 				// using other registers as displacement could cause issues (think about it).
+				// (I think that this last statement is actually invalid)
 
 				// Potential fix, check for specific circumstances:
 				// lea reg1, [rip]
@@ -484,7 +507,7 @@ bool ParseAndTranslateSingleInstruction(Disassembler* disassembler, PFHook* pfHo
 			}
 		}
 
-		if (!TranslateRelativeInstruction(pfHook, disassembler))
+		if (!TranslateRelativeInstruction(hook, disassembler))
 			return false;
 	}
 	else
@@ -495,7 +518,7 @@ bool ParseAndTranslateSingleInstruction(Disassembler* disassembler, PFHook* pfHo
 	return true;
 }
 
-bool ParseAndTranslate(PFHook* pfHook, UINT8* address, bool parseBranch)
+bool ParseAndTranslate(PFHook* hook, UINT8* address, bool parseBranch)
 {
 	Disassembler disassembler;
 	if (ZYAN_FAILED(InitializeDisassembler(&disassembler,
@@ -504,8 +527,8 @@ bool ParseAndTranslate(PFHook* pfHook, UINT8* address, bool parseBranch)
 		return false;
 	}
 
-	for (; (disassembler.address >= pfHook->OriginalPageInstructions()) && 
-		(disassembler.address < pfHook->OriginalPageEnd());
+	for (; (disassembler.address >= hook->OriginalPageInstructions()) && 
+		(disassembler.address < hook->OriginalPageEnd());
 		NextInstruction(&disassembler))
 	{
 		if (ZYAN_FAILED(Disassemble(&disassembler, 
@@ -516,15 +539,17 @@ bool ParseAndTranslate(PFHook* pfHook, UINT8* address, bool parseBranch)
 
 		ZydisDecodedInstruction* instruction = &disassembler.instruction;
 
+		if ((disassembler.address + instruction->length) < hook->OriginalPage())
+		{
+			continue;
+		}
+
 		// Don't make passes over analyzed instructions
-		if (!VerifyInstruction(pfHook->OriginalToNew(
+		if (!VerifyInstruction(hook->OriginalToNew(
 			disassembler.address), instruction->length))
 		{
 			break;
 		}
-
-		if (!ParseAndTranslateSingleInstruction(&disassembler, pfHook, parseBranch))
-			return false;
 
 		// Maybe move this above the ParseAndTranslateSingleInstruction for accurate branch parsing
 		// I think that this will require single-step exceptions
@@ -533,11 +558,14 @@ bool ParseAndTranslate(PFHook* pfHook, UINT8* address, bool parseBranch)
 		{
 			break;
 		}
+
+		if (!ParseAndTranslateSingleInstruction(&disassembler, hook, parseBranch))
+			return false;
 	}
 
-	if (disassembler.address >= pfHook->OriginalPageEnd())
+	if (disassembler.address >= hook->OriginalPageEnd())
 	{
-		PlaceAbsoluteJump(pfHook->OriginalToNew(disassembler.address), 
+		PlaceAbsoluteJump(hook->OriginalToNew(disassembler.address), 
 			reinterpret_cast<UINT64>(disassembler.address));
 	}
 

@@ -42,6 +42,8 @@ public:
 		mRelocCursor = mNewPages + PAGE_SIZE + BOUNDARY_INSTRUCTION_LENGTH * 2 + JMP_SIZE_ABS;
 		mNewPageSize = newPageSize;
 		InitializeListHead(&mTranslationList);
+
+		mRelocCursor = (mNewPages + 2 * PAGE_SIZE) - 2 * JMP_SIZE_ABS;
 	}
 
 	__forceinline UINT8* NewPagesEnd()
@@ -54,6 +56,12 @@ public:
 		return mNewPages + BOUNDARY_INSTRUCTION_LENGTH + PAGE_SIZE;
 	}
 
+	__forceinline UINT8* OriginalPage()
+	{
+		return reinterpret_cast<UINT8*>(PAGE_ALIGN(
+			mOriginalAddress));
+	}
+
 	__forceinline UINT8* OriginalPageEnd()
 	{
 		return reinterpret_cast<UINT8*>(PAGE_ALIGN(mOriginalAddress)) + PAGE_SIZE;
@@ -61,8 +69,7 @@ public:
 
 	__forceinline UINT8* OriginalPageInstructions()
 	{
-		return reinterpret_cast<UINT8*>(PAGE_ALIGN(
-			mOriginalAddress)) - BOUNDARY_INSTRUCTION_LENGTH;
+		return OriginalPage() - BOUNDARY_INSTRUCTION_LENGTH;
 	}
 
 	// Might require further changes or an additional function/parameter

@@ -25,18 +25,18 @@ bool PFHook::Relocate(const void* buffer, size_t length)
 	if ((mRelocCursor + length) >= NewPagesEnd())
 	{
 		// extend
-		mNewPageSize += PAGE_SIZE;
+		mNewPagesSize += PAGE_SIZE;
 
 		UINT8* oldNewPages = mNewPages;
 
 		mNewPages = reinterpret_cast<UINT8*>(VirtualAlloc(nullptr,
-			mNewPageSize, MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE));
+			mNewPagesSize, MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE));
 
 		if (!mNewPages)
 			return false;
 
-		memset(mNewPages, 0xCC, mNewPageSize);
-		memcpy(mNewPages, oldNewPages, mNewPageSize - PAGE_SIZE);
+		memset(mNewPages, 0xCC, mNewPagesSize);
+		memcpy(mNewPages, oldNewPages, mNewPagesSize - PAGE_SIZE);
 
 		mRelocCursor = mNewPages + (mRelocCursor - oldNewPages);
 
