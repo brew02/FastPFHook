@@ -23,7 +23,7 @@ public:
 	UINT8* mNewPages;
 	UINT8* mOriginalAddress;
 	UINT8* mRelocCursor;
-	UINT64 mNewPageSize;
+	UINT64 mNewPagesSize;
 
 	void NewTranslation(UINT8* originalAddress, UINT32 newOffset);
 	UINT32 GetTranslationOffset(UINT8* originalAddress);
@@ -40,15 +40,15 @@ public:
 		mNewPages = reinterpret_cast<UINT8*>(newPages);
 		mOriginalAddress = reinterpret_cast<UINT8*>(originalAddress);
 		mRelocCursor = mNewPages + PAGE_SIZE + BOUNDARY_INSTRUCTION_LENGTH * 2 + JMP_SIZE_ABS;
-		mNewPageSize = newPageSize;
+		mNewPagesSize = newPageSize;
 		InitializeListHead(&mTranslationList);
 
-		mRelocCursor = (mNewPages + 2 * PAGE_SIZE) - 2 * JMP_SIZE_ABS;
+		mRelocCursor = (mNewPages + mNewPagesSize) - 2 * JMP_SIZE_ABS;
 	}
 
 	__forceinline UINT8* NewPagesEnd()
 	{
-		return mNewPages + mNewPageSize;
+		return mNewPages + mNewPagesSize;
 	}
 
 	__forceinline UINT8* NewPagesInstructionsEnd()
