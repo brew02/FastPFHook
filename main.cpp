@@ -226,6 +226,26 @@ UINT8* GetBranchAddress(Disassembler* disassembler, UINT8* newRIP, ZydisOperandT
 	return nullptr;
 }
 
+UINT8 GetInstructionLengthAtAddress(void* address)
+{
+	Disassembler disassembler;
+	if (ZYAN_FAILED(InitializeDisassembler(
+		&disassembler, ZYDIS_MACHINE_MODE_LONG_64,
+		ZYDIS_STACK_WIDTH_64, address)))
+	{
+		return 0;
+	}
+
+	if (ZYAN_FAILED(ZydisDecoderDecodeInstruction(&disassembler.decoder, nullptr,
+		address, ZYDIS_MAX_INSTRUCTION_LENGTH, &disassembler.instruction)))
+	{
+		return 0;
+	}
+
+	return disassembler.instruction.length;
+}
+
+
 // We need to deal with double branches (place breakpoints on them properly)
 // Ex.
 // jcc (2 bytes)
@@ -282,32 +302,33 @@ ZyanStatus PlaceAbsoluteInstruction(PFHook* hook, UINT64 rip,
 				return ZYAN_STATUS_FAILED;
 		}
 
-		// This needs to be cleaned up
 		ZydisOperandType type = ZYDIS_OPERAND_TYPE_UNUSED;
-		UINT8* branchAddress = GetBranchAddress(disassembler, hook->OriginalToNew(reinterpret_cast<void*>(rip)), &type);
-		// Same drill as below (see later function)
+		UINT8* branchAddress = GetBranchAddress(disassembler, reinterpret_cast<UINT8*>(rip), &type);
 		if (!branchAddress)
+			return false;
+
+		UINT8 instructionLength = GetInstructionLengthAtAddress(branchAddress);
+		if (!instructionLength)
 			return ZYAN_STATUS_FAILED;
 
-		if (branchAddress < hook->mNewPages || branchAddress >= hook->NewPagesInstructionsEnd())
+		if (((branchAddress + instructionLength) >= hook->OriginalPage() &&
+			branchAddress < hook->OriginalPageEnd()))
 		{
-			// Deal with the other two branch types properly
+			if (!hook->PlaceAbsoluteJump(reinterpret_cast<UINT64>(hook->OriginalToNew(branchAddress))))
+				return ZYAN_STATUS_FAILED;
+		}
+		else
+		{
 			if (type == ZYDIS_OPERAND_TYPE_IMMEDIATE)
-			{
-				if (!hook->PlaceAbsoluteJump(reinterpret_cast<UINT64>(hook->NewToOriginal(branchAddress))))
-					return ZYAN_STATUS_FAILED;
-			}
-			else 
 			{
 				if (!hook->PlaceAbsoluteJump(reinterpret_cast<UINT64>(branchAddress)))
 					return ZYAN_STATUS_FAILED;
 			}
-		}
-		else
-		{
-			// Make this a relative jmp
-			if (!hook->PlaceAbsoluteJump(reinterpret_cast<UINT64>(branchAddress)))
-				return ZYAN_STATUS_FAILED;
+			else
+			{
+				if (!hook->PlaceAbsoluteJump(reinterpret_cast<UINT64>(branchAddress)))
+					return ZYAN_STATUS_FAILED;
+			}
 		}
 
 		return ZYAN_STATUS_SUCCESS;
@@ -446,25 +467,6 @@ bool TranslateRelativeInstruction(PFHook* hook, Disassembler* disassembler)
 	return true;
 }
 
-UINT8 GetInstructionLengthAtAddress(void* address)
-{
-	Disassembler disassembler;
-	if (ZYAN_FAILED(InitializeDisassembler(
-		&disassembler, ZYDIS_MACHINE_MODE_LONG_64, 
-		ZYDIS_STACK_WIDTH_64, address)))
-	{
-		return 0;
-	}
-
-	if (ZYAN_FAILED(ZydisDecoderDecodeInstruction(&disassembler.decoder, nullptr,
-		address, ZYDIS_MAX_INSTRUCTION_LENGTH, &disassembler.instruction)))
-	{
-		return 0;
-	}
-	
-	return disassembler.instruction.length;
-}
-
 bool VerifyInstruction(UINT8* address, UINT8 length)
 {
 	for (UINT8 i = 0; i < length; i++)
@@ -484,15 +486,21 @@ bool ParseAndTranslateSingleInstruction(Disassembler* disassembler, PFHook* hook
 		if (instruction->meta.branch_type != ZYDIS_BRANCH_TYPE_NONE)
 		{
 			ZydisOperandType type = ZYDIS_OPERAND_TYPE_UNUSED;
-			UINT8* branchAddress = GetBranchAddress(disassembler, mpAddress + instruction->length, &type);
+			UINT8* branchAddress = GetBranchAddress(disassembler, disassembler->address + instruction->length, &type);
 			if (!branchAddress)
 				return false;
 
-			if ((branchAddress >= hook->mNewPages &&
-				branchAddress < hook->NewPagesInstructionsEnd()))
+			if ((branchAddress >= hook->OriginalPageInstructions() &&
+				branchAddress < hook->OriginalPageEnd()))
 			{
-				if (!parseBranch)
+				UINT8 length = GetInstructionLengthAtAddress(branchAddress);
+				if (!length || 
+					(branchAddress + length) < hook->OriginalPage() || 
+					!parseBranch)
+				{
 					return false;
+				}
+					
 				// Relative CONDITIONAL branches should be taken care of, at least
 				// for opaque predicates, but a better approach that would allow for
 				// better analysis would be to leave the breakpoints on the branching
