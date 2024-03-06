@@ -139,12 +139,14 @@
   <ItemGroup>
     <ClCompile Include="Internal\hook.cpp" />
     <ClCompile Include="Internal\translate.cpp" />
+    <ClCompile Include="Internal\util.cpp" />
     <ClCompile Include="main.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Internal\common.h" />
     <ClInclude Include="Internal\hook.h" />
     <ClInclude Include="Internal\translate.h" />
+    <ClInclude Include="Internal\util.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

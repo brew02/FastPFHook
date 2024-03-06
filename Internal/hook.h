@@ -1,8 +1,10 @@
 #pragma once
 #include <Windows.h>
+#include <intrin.h>
 
 #include <Zydis/Zydis.h>
 
+#include "util.h"
 #include "common.h"
 
 #define BOUNDARY_INSTRUCTION_LENGTH (ZYDIS_MAX_INSTRUCTION_LENGTH - 1)
@@ -18,12 +20,15 @@ private:
 	};
 
 	LIST_ENTRY mTranslationList;
+	volatile long mWriteLock;
 
 public:
+	LIST_ENTRY listEntry;
 	UINT8* mNewPages;
 	UINT8* mOriginalAddress;
 	UINT8* mRelocCursor;
 	UINT64 mNewPagesSize;
+	volatile unsigned long long mThreadCount;
 
 	void NewTranslation(UINT8* originalAddress, UINT32 newOffset);
 	UINT32 GetTranslationOffset(UINT8* originalAddress);
@@ -35,16 +40,21 @@ public:
 	bool PlaceAbsoluteJumpAndBreak(UINT64 address);
 	bool PlaceManualReturnAddress(UINT64 returnAddress);
 
-	PFHook(void* newPages, void* originalAddress, UINT64 newPageSize)
+	PFHook(void* newPages, void* originalAddress, UINT64 newPageSize) : 
+		mThreadCount{ 0 }, mWriteLock{ 0 }, mNewPages{ reinterpret_cast<UINT8*>(newPages) },
+		mOriginalAddress{ reinterpret_cast<UINT8*>(originalAddress) }, mNewPagesSize{ newPageSize },
+		listEntry{nullptr, nullptr}
 	{
-		mNewPages = reinterpret_cast<UINT8*>(newPages);
-		mOriginalAddress = reinterpret_cast<UINT8*>(originalAddress);
 		mRelocCursor = mNewPages + PAGE_SIZE + BOUNDARY_INSTRUCTION_LENGTH * 2 + JMP_SIZE_ABS;
-		mNewPagesSize = newPageSize;
 		InitializeListHead(&mTranslationList);
-
-		mRelocCursor = (mNewPages + mNewPagesSize) - 2 * JMP_SIZE_ABS;
 	}
+
+	// Remove some of these function, they are pointless
+
+	// Add destructor definitions
+
+	// Add a varible that keeps track of the number of times this hook is referenced, (i.e. multiple function hooks on the same page)
+	// Add another list that keeps track of all of the originalAddresses for function hooking purposes
 
 	__forceinline UINT8* NewPagesEnd()
 	{
@@ -86,5 +96,21 @@ public:
 	__forceinline UINT8* NewToOriginal(void* newAddress)
 	{
 		return OriginalPageInstructions() + (reinterpret_cast<UINT8*>(newAddress) - mNewPages);
+	}
+
+	__forceinline bool TryWriteLock()
+	{
+		return !mWriteLock && !InterlockedBitTestAndSet(&mWriteLock, 0);
+	}
+
+	__forceinline void AcquireWriteLock()
+	{
+		while (!TryWriteLock())
+			Sleep(10);
+	}
+
+	__forceinline void ReleaseWriteLock()
+	{
+		InterlockedBitTestAndReset(&mWriteLock, 0);
 	}
 };
