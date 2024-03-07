@@ -65,6 +65,12 @@ ZyanStatus PlaceAbsoluteInstruction(PFHook* hook,
 		if (!instructionLength)
 			return ZYAN_STATUS_FAILED;
 
+		// Add a new jump for all instructions that leave our page
+		// that are instead redirected to an exit gate.
+		// This exit gate will lock dec byte ptr [rax], where rax contains the threadCount 
+		// before leaving the page as normal.
+		// It may perform other operations in the future as well.
+
 		if (((branchAddress + instructionLength) >= hook->OriginalPage() &&
 			branchAddress < hook->OriginalPageEnd()))
 		{
@@ -340,4 +346,13 @@ bool ParseAndTranslate(PFHook* hook, void* address, bool parseBranch)
 	}
 
 	return true;
+}
+
+bool ParseAndTranslateSafe(PFHook* hook, void* address, bool parseBranch)
+{
+	hook->AcquireWriteLock();
+	bool status = ParseAndTranslate(hook, address, parseBranch);
+	hook->ReleaseWriteLock();
+
+	return status;
 }

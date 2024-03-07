@@ -53,7 +53,7 @@ long __stdcall ExceptionHandler(EXCEPTION_POINTERS* exceptionInfo)
 		}
 
 		contextRecord->Rip = reinterpret_cast<UINT64>(hook->OriginalToNew(rip, true));
-		hook->mThreadCount++;
+		hook->IncrementThreadCount();
 
 		return EXCEPTION_CONTINUE_EXECUTION;
 	}
@@ -72,7 +72,7 @@ long __stdcall ExceptionHandler(EXCEPTION_POINTERS* exceptionInfo)
 	{
 		UINT8* originalRIP = hook->NewToOriginal(rip);
 		// Perform additional analysis on rip and the branch to work
-		ParseAndTranslate(hook, originalRIP, true);
+		ParseAndTranslateSafe(hook, originalRIP, true);
 		contextRecord->EFlags |= TRAP_FLAG;
 		contextRecord->Rip = reinterpret_cast<UINT64>(hook->OriginalToNew(originalRIP, true));
 
@@ -84,7 +84,7 @@ long __stdcall ExceptionHandler(EXCEPTION_POINTERS* exceptionInfo)
 
 		if (rip >= hook->mNewPages && rip < hook->NewPagesInstructionsEnd())
 		{
-			ParseAndTranslate(hook, hook->NewToOriginal(rip), false);
+			ParseAndTranslateSafe(hook, hook->NewToOriginal(rip), false);
 		}
 		
 		contextRecord->EFlags &= ~(TRAP_FLAG);
@@ -136,7 +136,7 @@ PFHook* InstallHook(void* address)
 	}
 
 	// Maybe add a check here (not sure if all 'false' returns are actually bad right now)
-	ParseAndTranslate(hook, address, false);
+	ParseAndTranslateSafe(hook, address, false);
 
 	return hook;
 }
@@ -162,6 +162,9 @@ int main()
 	//((decltype(MessageBoxA)*)(messageBoxA))(nullptr, "Test", nullptr, MB_ICONWARNING);
 
 	UninitializePFH();
+
+	PFHook* hook = FindHook(&MessageBoxA);
+	printf("Thread Count: %llu\n", hook->mThreadCount);
 
 	return 0;
 }

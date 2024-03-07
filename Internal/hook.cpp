@@ -103,3 +103,17 @@ bool PFHook::PlaceManualReturnAddress(UINT64 returnAddress)
 
 	return Relocate(instructions, MANUAL_RET_SIZE);
 }
+
+void PFHook::AcquireWriteLock()
+{
+	while (TryWriteLock())
+		Sleep(10);
+
+	VirtualProtect(mNewPages, mNewPagesSize, PAGE_READWRITE, &mPageProtection);
+}
+
+void PFHook::ReleaseWriteLock()
+{
+	VirtualProtect(mNewPages, mNewPagesSize, mPageProtection, &mPageProtection);
+	InterlockedBitTestAndReset(&mWriteLock, 0);
+}

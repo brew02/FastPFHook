@@ -22,6 +22,13 @@ private:
 	LIST_ENTRY mTranslationList;
 	volatile long mWriteLock;
 
+	ULONG mPageProtection;
+
+	__forceinline bool TryWriteLock()
+	{
+		return !mWriteLock && !InterlockedBitTestAndSet(&mWriteLock, 0);
+	}
+
 public:
 	LIST_ENTRY listEntry;
 	UINT8* mNewPages;
@@ -40,21 +47,21 @@ public:
 	bool PlaceAbsoluteJumpAndBreak(UINT64 address);
 	bool PlaceManualReturnAddress(UINT64 returnAddress);
 
-	PFHook(void* newPages, void* originalAddress, UINT64 newPageSize) : 
+	void AcquireWriteLock();
+	void ReleaseWriteLock();
+
+	PFHook(void* newPages, void* originalAddress, UINT64 newPageSize) :
 		mThreadCount{ 0 }, mWriteLock{ 0 }, mNewPages{ reinterpret_cast<UINT8*>(newPages) },
 		mOriginalAddress{ reinterpret_cast<UINT8*>(originalAddress) }, mNewPagesSize{ newPageSize },
-		listEntry{nullptr, nullptr}
+		listEntry{ nullptr, nullptr }, mPageProtection{ 0 }
 	{
 		mRelocCursor = mNewPages + PAGE_SIZE + BOUNDARY_INSTRUCTION_LENGTH * 2 + JMP_SIZE_ABS;
 		InitializeListHead(&mTranslationList);
 	}
 
 	// Remove some of these function, they are pointless
-
 	// Add destructor definitions
-
-	// Add a varible that keeps track of the number of times this hook is referenced, (i.e. multiple function hooks on the same page)
-	// Add another list that keeps track of all of the originalAddresses for function hooking purposes
+	// Add another list that keeps track of all of the originalAddresses for function hooking purposes (i.e. multiple function hooks on the same page)
 
 	__forceinline UINT8* NewPagesEnd()
 	{
@@ -82,8 +89,6 @@ public:
 		return OriginalPage() - BOUNDARY_INSTRUCTION_LENGTH;
 	}
 
-	// Might require further changes or an additional function/parameter
-	// for small relative instructions converted to a larger one.
 	__forceinline UINT8* OriginalToNew(void* originalAddress, bool useTranslations = false)
 	{
 		if (useTranslations)
@@ -92,25 +97,18 @@ public:
 			return mNewPages + (reinterpret_cast<UINT8*>(originalAddress) - OriginalPageInstructions());
 	}
 
-	// This might need changes for top instruction support
 	__forceinline UINT8* NewToOriginal(void* newAddress)
 	{
 		return OriginalPageInstructions() + (reinterpret_cast<UINT8*>(newAddress) - mNewPages);
 	}
 
-	__forceinline bool TryWriteLock()
+	__forceinline void IncrementThreadCount()
 	{
-		return !mWriteLock && !InterlockedBitTestAndSet(&mWriteLock, 0);
+		InterlockedIncrement(&mThreadCount);
 	}
-
-	__forceinline void AcquireWriteLock()
+	
+	__forceinline void DecrementThreadCount()
 	{
-		while (!TryWriteLock())
-			Sleep(10);
-	}
-
-	__forceinline void ReleaseWriteLock()
-	{
-		InterlockedBitTestAndReset(&mWriteLock, 0);
+		InterlockedDecrement(&mThreadCount);
 	}
 };
