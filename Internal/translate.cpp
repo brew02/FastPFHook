@@ -1,5 +1,6 @@
 #include "translate.h"
 
+// Remove rip and just use disassembler
 // We need to deal with double branches (place breakpoints on them properly)
 // Ex.
 // jcc (2 bytes)
