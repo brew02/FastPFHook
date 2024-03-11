@@ -30,7 +30,7 @@ bool PFHook::Relocate(const void* buffer, size_t length)
 		UINT8* oldNewPages = mNewPages;
 
 		mNewPages = reinterpret_cast<UINT8*>(VirtualAlloc(nullptr,
-			mNewPagesSize, MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE));
+			mNewPagesSize, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
 
 		if (!mNewPages)
 			return false;
@@ -116,4 +116,15 @@ void PFHook::ReleaseWriteLock()
 {
 	VirtualProtect(mNewPages, mNewPagesSize, mPageProtection, &mPageProtection);
 	InterlockedBitTestAndReset(&mWriteLock, 0);
+}
+
+// Use different locks for this list and all others
+void PFHook::NewThread()
+{
+	Thread* thread = new Thread;
+
+	thread->threadID = reinterpret_cast<void*>(__readgsqword(0x48));
+	thread->newPages = mNewPages;
+
+	InsertListHead(&mThreadList, &thread->listEntry);
 }

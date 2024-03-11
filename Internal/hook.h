@@ -18,10 +18,17 @@ private:
 		UINT8* originalAddress;
 		UINT32 newOffset;
 	};
-
 	LIST_ENTRY mTranslationList;
-	volatile long mWriteLock;
 
+	struct Thread
+	{
+		LIST_ENTRY listEntry;
+		void* threadID;
+		UINT8* newPages;
+	};
+	LIST_ENTRY mThreadList;
+
+	volatile long mWriteLock;
 	ULONG mPageProtection;
 
 	__forceinline bool TryWriteLock()
@@ -35,7 +42,6 @@ public:
 	UINT8* mOriginalAddress;
 	UINT8* mRelocCursor;
 	UINT64 mNewPagesSize;
-	volatile unsigned long long mThreadCount;
 
 	void NewTranslation(UINT8* originalAddress, UINT32 newOffset);
 	UINT32 GetTranslationOffset(UINT8* originalAddress);
@@ -50,13 +56,17 @@ public:
 	void AcquireWriteLock();
 	void ReleaseWriteLock();
 
+	void NewThread();
+
 	PFHook(void* newPages, void* originalAddress, UINT64 newPageSize) :
-		mThreadCount{ 0 }, mWriteLock{ 0 }, mNewPages{ reinterpret_cast<UINT8*>(newPages) },
+		mWriteLock{ 0 }, mNewPages{ reinterpret_cast<UINT8*>(newPages) },
 		mOriginalAddress{ reinterpret_cast<UINT8*>(originalAddress) }, mNewPagesSize{ newPageSize },
 		listEntry{ nullptr, nullptr }, mPageProtection{ 0 }
 	{
 		mRelocCursor = mNewPages + PAGE_SIZE + BOUNDARY_INSTRUCTION_LENGTH * 2 + JMP_SIZE_ABS;
+		mRelocCursor = mNewPages + mNewPagesSize - BOUNDARY_INSTRUCTION_LENGTH;
 		InitializeListHead(&mTranslationList);
+		InitializeListHead(&mThreadList);
 	}
 
 	// Remove some of these function, they are pointless
@@ -75,13 +85,14 @@ public:
 
 	__forceinline UINT8* OriginalPage()
 	{
-		return reinterpret_cast<UINT8*>(PAGE_ALIGN(
-			mOriginalAddress));
+		return reinterpret_cast<UINT8*>(
+			PAGE_ALIGN(mOriginalAddress));
 	}
 
 	__forceinline UINT8* OriginalPageEnd()
 	{
-		return reinterpret_cast<UINT8*>(PAGE_ALIGN(mOriginalAddress)) + PAGE_SIZE;
+		return reinterpret_cast<UINT8*>(
+			PAGE_ALIGN(mOriginalAddress)) + PAGE_SIZE;
 	}
 
 	__forceinline UINT8* OriginalPageInstructions()
@@ -92,23 +103,19 @@ public:
 	__forceinline UINT8* OriginalToNew(void* originalAddress, bool useTranslations = false)
 	{
 		if (useTranslations)
-			return mNewPages + GetTranslationOffset(reinterpret_cast<UINT8*>(originalAddress));
+		{
+			return mNewPages + GetTranslationOffset(
+				reinterpret_cast<UINT8*>(originalAddress));
+		}
 		else
-			return mNewPages + (reinterpret_cast<UINT8*>(originalAddress) - OriginalPageInstructions());
+		{
+			return mNewPages + (reinterpret_cast<UINT8*>(
+				originalAddress) - OriginalPageInstructions());
+		}
 	}
 
 	__forceinline UINT8* NewToOriginal(void* newAddress)
 	{
 		return OriginalPageInstructions() + (reinterpret_cast<UINT8*>(newAddress) - mNewPages);
-	}
-
-	__forceinline void IncrementThreadCount()
-	{
-		InterlockedIncrement(&mThreadCount);
-	}
-	
-	__forceinline void DecrementThreadCount()
-	{
-		InterlockedDecrement(&mThreadCount);
 	}
 };

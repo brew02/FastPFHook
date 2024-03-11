@@ -53,7 +53,6 @@ long __stdcall ExceptionHandler(EXCEPTION_POINTERS* exceptionInfo)
 		}
 
 		contextRecord->Rip = reinterpret_cast<UINT64>(hook->OriginalToNew(rip, true));
-		hook->IncrementThreadCount();
 
 		return EXCEPTION_CONTINUE_EXECUTION;
 	}
@@ -71,7 +70,7 @@ long __stdcall ExceptionHandler(EXCEPTION_POINTERS* exceptionInfo)
 		(rip >= hook->mNewPages && rip < hook->NewPagesInstructionsEnd()))
 	{
 		UINT8* originalRIP = hook->NewToOriginal(rip);
-		// Perform additional analysis on rip and the branch to work
+		// Perform additional analysis on rip and the branch to deal with certain obfuscation
 		ParseAndTranslateSafe(hook, originalRIP, true);
 		contextRecord->EFlags |= TRAP_FLAG;
 		contextRecord->Rip = reinterpret_cast<UINT64>(hook->OriginalToNew(originalRIP, true));
@@ -162,9 +161,6 @@ int main()
 	//((decltype(MessageBoxA)*)(messageBoxA))(nullptr, "Test", nullptr, MB_ICONWARNING);
 
 	UninitializePFH();
-
-	PFHook* hook = FindHook(&MessageBoxA);
-	printf("Thread Count: %llu\n", hook->mThreadCount);
 
 	return 0;
 }
