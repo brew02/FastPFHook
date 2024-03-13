@@ -145,6 +145,7 @@
   <ItemGroup>
     <ClInclude Include="Internal\common.h" />
     <ClInclude Include="Internal\hook.h" />
+    <ClInclude Include="Internal\lock.h" />
     <ClInclude Include="Internal\translate.h" />
     <ClInclude Include="Internal\util.h" />
   </ItemGroup>

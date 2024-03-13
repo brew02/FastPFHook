@@ -37,5 +37,8 @@
     <ClInclude Include="Internal\util.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="Internal\lock.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
 </Project>

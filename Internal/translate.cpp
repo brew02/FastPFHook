@@ -351,9 +351,9 @@ bool ParseAndTranslate(PFHook* hook, void* address, bool parseBranch)
 
 bool ParseAndTranslateSafe(PFHook* hook, void* address, bool parseBranch)
 {
-	hook->AcquireWriteLock();
+	hook->LockWrites();
 	bool status = ParseAndTranslate(hook, address, parseBranch);
-	hook->ReleaseWriteLock();
+	hook->AllowWrites();
 
 	return status;
 }

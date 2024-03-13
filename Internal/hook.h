@@ -6,6 +6,7 @@
 
 #include "util.h"
 #include "common.h"
+#include "lock.h"
 
 #define BOUNDARY_INSTRUCTION_LENGTH (ZYDIS_MAX_INSTRUCTION_LENGTH - 1)
 
@@ -28,13 +29,8 @@ private:
 	};
 	LIST_ENTRY mThreadList;
 
-	volatile long mWriteLock;
+	Lock mWriteLock;
 	ULONG mPageProtection;
-
-	__forceinline bool TryWriteLock()
-	{
-		return !mWriteLock && !InterlockedBitTestAndSet(&mWriteLock, 0);
-	}
 
 public:
 	LIST_ENTRY listEntry;
@@ -53,13 +49,10 @@ public:
 	bool PlaceAbsoluteJumpAndBreak(UINT64 address);
 	bool PlaceManualReturnAddress(UINT64 returnAddress);
 
-	void AcquireWriteLock();
-	void ReleaseWriteLock();
-
 	void NewThread();
 
 	PFHook(void* newPages, void* originalAddress, UINT64 newPageSize) :
-		mWriteLock{ 0 }, mNewPages{ reinterpret_cast<UINT8*>(newPages) },
+		mWriteLock{}, mNewPages{ reinterpret_cast<UINT8*>(newPages) },
 		mOriginalAddress{ reinterpret_cast<UINT8*>(originalAddress) }, mNewPagesSize{ newPageSize },
 		listEntry{ nullptr, nullptr }, mPageProtection{ 0 }
 	{
@@ -67,6 +60,18 @@ public:
 		mRelocCursor = mNewPages + mNewPagesSize - BOUNDARY_INSTRUCTION_LENGTH;
 		InitializeListHead(&mTranslationList);
 		InitializeListHead(&mThreadList);
+	}
+
+	inline void LockWrites()
+	{
+		mWriteLock.Acquire();
+		VirtualProtect(mNewPages, mNewPagesSize, PAGE_READWRITE, &mPageProtection);
+	}
+
+	inline void AllowWrites()
+	{
+		VirtualProtect(mNewPages, mNewPagesSize, mPageProtection, &mPageProtection);
+		mWriteLock.Release();
 	}
 
 	// Remove some of these function, they are pointless
