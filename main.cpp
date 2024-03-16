@@ -10,27 +10,10 @@
 // Add credits to MinHook author and SMAP Btbd
 
 void* gExceptionHandlerHandle = nullptr;
-LIST_ENTRY gHookList{ nullptr, nullptr };
 
 // More TODOs: Add multi-threading support (locks), split code into different files, 
 // read comment about unconditional branches below (somewhere)
 // Use classes for the Disassembler struct and the HookData struct
-
-// Address: An address within the original page or the new pages
-PFHook* FindHook(void* address)
-{
-	for (LIST_ENTRY* entry = gHookList.Flink; entry != &gHookList; entry = entry->Flink)
-	{
-		PFHook* hook = CONTAINING_RECORD(entry, PFHook, listEntry);
-		if ((address >= hook->OriginalPage() && address < hook->OriginalPageEnd()) ||
-			address >= hook->mNewPages && address < hook->NewPagesEnd())
-		{
-			return hook;
-		}
-	}
-
-	return nullptr;
-}
 
 // Create separate functions for access violations, breakpoints, and single-steps
 long __stdcall ExceptionHandler(EXCEPTION_POINTERS* exceptionInfo)
@@ -44,17 +27,33 @@ long __stdcall ExceptionHandler(EXCEPTION_POINTERS* exceptionInfo)
 		return EXCEPTION_CONTINUE_SEARCH;
 
 	if (exceptionRecord->ExceptionCode == EXCEPTION_ACCESS_VIOLATION &&
-		(rip >= hook->OriginalPageInstructions() && rip < hook->OriginalPageEnd()))
+		exceptionRecord->NumberParameters != 0 &&
+		exceptionRecord->ExceptionInformation[0] == EXCEPTION_INFORMATION_EXECUTION)
 	{
-		if (exceptionRecord->NumberParameters == 0 || 
-			exceptionRecord->ExceptionInformation[0] != EXCEPTION_INFORMATION_EXECUTION)
+		PFHook::Thread* thread = hook->FindThread();
+		if (!thread)
+			thread = hook->NewThread();
+
+		if ((rip >= hook->OriginalPageInstructions() && rip < hook->OriginalPageEnd()))
 		{
-			return EXCEPTION_CONTINUE_SEARCH;
+			contextRecord->Rip = reinterpret_cast<UINT64>(hook->OriginalToNew(rip, true));
+			return EXCEPTION_CONTINUE_EXECUTION;
 		}
+		else
+		{
+			if (rip >= thread->newPages && rip < (thread->newPages + hook->mNewPagesSize))
+			{
+				while (hook->PeakWriteLock())
+				{
+					Sleep(10);
+				}
 
-		contextRecord->Rip = reinterpret_cast<UINT64>(hook->OriginalToNew(rip, true));
-
-		return EXCEPTION_CONTINUE_EXECUTION;
+				rip = hook->mNewPages + (rip - thread->newPages);
+				thread->newPages = hook->mNewPages;
+				contextRecord->Rip = reinterpret_cast<UINT64>(rip);
+				return EXCEPTION_CONTINUE_EXECUTION;
+			}
+		}
 	}
 
 	// We may need to make some changes to the conditions that we check for the top and bottom

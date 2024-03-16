@@ -112,6 +112,7 @@
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>_DEBUG;_CONSOLE;ZYDIS_STATIC_BUILD;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
+      <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -145,6 +146,7 @@
   <ItemGroup>
     <ClInclude Include="Internal\common.h" />
     <ClInclude Include="Internal\hook.h" />
+    <ClInclude Include="Internal\list.h" />
     <ClInclude Include="Internal\lock.h" />
     <ClInclude Include="Internal\translate.h" />
     <ClInclude Include="Internal\util.h" />

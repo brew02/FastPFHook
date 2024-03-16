@@ -104,13 +104,43 @@ bool PFHook::PlaceManualReturnAddress(UINT64 returnAddress)
 	return Relocate(instructions, MANUAL_RET_SIZE);
 }
 
+PFHook::Thread* PFHook::FindThread()
+{
+	for (LIST_ENTRY* entry = mThreadList.Flink; entry != &mThreadList; entry = entry->Flink)
+	{
+		Thread* thread = CONTAINING_RECORD(entry, Thread, listEntry);
+		if (thread->threadID == reinterpret_cast<void*>(__readgsqword(0x48)))
+			return thread;
+	}
+
+	return nullptr;
+}
+
 // Use different locks for this list and all others
-void PFHook::NewThread()
+PFHook::Thread* PFHook::NewThread()
 {
 	Thread* thread = new Thread;
 
 	thread->threadID = reinterpret_cast<void*>(__readgsqword(0x48));
-	thread->newPages = mNewPages;
+	thread->newPages = this->mNewPages;
 
 	InsertListHead(&mThreadList, &thread->listEntry);
+
+	return thread;
+}
+
+// Address: An address within the original page or the new pages
+PFHook* FindHook(void* address)
+{
+	for (LIST_ENTRY* entry = gHookList.Flink; entry != &gHookList; entry = entry->Flink)
+	{
+		PFHook* hook = CONTAINING_RECORD(entry, PFHook, listEntry);
+		if ((address >= hook->OriginalPage() && address < hook->OriginalPageEnd()) ||
+			address >= hook->mNewPages && address < hook->NewPagesEnd())
+		{
+			return hook;
+		}
+	}
+
+	return nullptr;
 }
