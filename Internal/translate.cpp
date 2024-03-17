@@ -209,7 +209,8 @@ bool TranslateRelativeInstruction(PFHook* hook, Disassembler* disassembler)
 			if (ZYAN_FAILED(Disassemble(disassembler, ZYDIS_MAX_INSTRUCTION_LENGTH)))
 				return false;
 
-			hook->NewTranslation(disassembler->address, offset);
+			hook->InsertTranslation(PFHook::Translation{ disassembler->address, 
+				static_cast<uint32_t>(hook->mRelocCursor - hook->mNewPages) });
 		}
 	}
 
@@ -353,7 +354,7 @@ bool ParseAndTranslateSafe(PFHook* hook, void* address, bool parseBranch)
 {
 	hook->LockWrites();
 	bool status = ParseAndTranslate(hook, address, parseBranch);
-	hook->AllowWrites();
+	hook->UnlockWrites();
 
 	return status;
 }

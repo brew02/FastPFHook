@@ -1,39 +1,43 @@
 #pragma once
 #include <Windows.h>
 #include <intrin.h>
+#include <vector>
+#include <mutex>
 
 #include <Zydis/Zydis.h>
 
 #include "util.h"
 #include "common.h"
-#include "lock.h"
-#include "list.h"
 
 #define BOUNDARY_INSTRUCTION_LENGTH (ZYDIS_MAX_INSTRUCTION_LENGTH - 1)
 
 class PFHook
 {
-private:
-	struct Translation
-	{
-		LIST_ENTRY listEntry;
-		UINT8* originalAddress;
-		UINT32 newOffset;
-	};
-	LIST_ENTRY mTranslationList;
-
-	LIST_ENTRY mThreadList;
-
-	Lock mWriteLock;
-	ULONG mPageProtection;
-
 public:
 	struct Thread
 	{
-		LIST_ENTRY listEntry;
-		void* threadID;
+		UINT64 threadID;
 		UINT8* newPages;
 	};
+
+	struct Translation
+	{
+		UINT8* originalAddress;
+		UINT32 newOffset;
+	};
+
+private:
+	std::vector<Translation> mTranslations;
+	std::mutex mTranslationMutex;
+
+	std::vector<Thread> mThreads;
+	std::mutex mThreadMutex;
+
+	bool mWritingLocked;
+	std::mutex mWriteMutex;
+	ULONG mPageProtection;
+
+public:
 
 	LIST_ENTRY listEntry;
 	UINT8* mNewPages;
@@ -41,8 +45,8 @@ public:
 	UINT8* mRelocCursor;
 	UINT64 mNewPagesSize;
 
-	void NewTranslation(UINT8* originalAddress, UINT32 newOffset);
-	UINT32 GetTranslationOffset(UINT8* originalAddress);
+	void InsertTranslation(const Translation& translation);
+	uint32_t FindTranslationOffset(uint8_t* originalAddress);
 
 	bool Relocate(const void* buffer, size_t length);
 
@@ -51,34 +55,35 @@ public:
 	bool PlaceAbsoluteJumpAndBreak(UINT64 address);
 	bool PlaceManualReturnAddress(UINT64 returnAddress);
 
-	Thread* FindThread();
-	Thread* NewThread();
+	void InsertCurrentThread();
+	uint8_t* FindThreadNewPages();
+	void SetThreadNewPages(uint8_t* newPages);
 
 	PFHook(void* newPages, void* originalAddress, UINT64 newPageSize) :
-		mWriteLock{}, mNewPages{ reinterpret_cast<UINT8*>(newPages) },
+		mNewPages{ reinterpret_cast<UINT8*>(newPages) }, mWritingLocked{false},
 		mOriginalAddress{ reinterpret_cast<UINT8*>(originalAddress) }, mNewPagesSize{ newPageSize },
 		listEntry{ nullptr, nullptr }, mPageProtection{ 0 }
 	{
 		mRelocCursor = mNewPages + PAGE_SIZE + BOUNDARY_INSTRUCTION_LENGTH * 2 + JMP_SIZE_ABS;
-		InitializeListHead(&mTranslationList);
-		InitializeListHead(&mThreadList);
 	}
 
 	inline void LockWrites()
 	{
-		mWriteLock.Acquire();
+		mWritingLocked = true;
+		mWriteMutex.lock();
 		VirtualProtect(mNewPages, mNewPagesSize, PAGE_READWRITE, &mPageProtection);
 	}
 
-	inline void AllowWrites()
+	inline void UnlockWrites()
 	{
 		VirtualProtect(mNewPages, mNewPagesSize, mPageProtection, &mPageProtection);
-		mWriteLock.Release();
+		mWriteMutex.unlock();
+		mWritingLocked = false;
 	}
 
 	__forceinline volatile long PeakWriteLock()
 	{
-		return mWriteLock.Peak();
+		return mWritingLocked;
 	}
 
 	// Remove some of these function, they are pointless
@@ -116,7 +121,7 @@ public:
 	{
 		if (useTranslations)
 		{
-			return mNewPages + GetTranslationOffset(
+			return mNewPages + FindTranslationOffset(
 				reinterpret_cast<UINT8*>(originalAddress));
 		}
 		else

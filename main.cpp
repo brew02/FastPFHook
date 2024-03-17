@@ -30,9 +30,12 @@ long __stdcall ExceptionHandler(EXCEPTION_POINTERS* exceptionInfo)
 		exceptionRecord->NumberParameters != 0 &&
 		exceptionRecord->ExceptionInformation[0] == EXCEPTION_INFORMATION_EXECUTION)
 	{
-		PFHook::Thread* thread = hook->FindThread();
-		if (!thread)
-			thread = hook->NewThread();
+		uint8_t* newPages = hook->FindThreadNewPages();
+		if (!newPages)
+		{
+			hook->InsertCurrentThread();
+			newPages = hook->FindThreadNewPages();
+		}
 
 		if ((rip >= hook->OriginalPageInstructions() && rip < hook->OriginalPageEnd()))
 		{
@@ -41,15 +44,17 @@ long __stdcall ExceptionHandler(EXCEPTION_POINTERS* exceptionInfo)
 		}
 		else
 		{
-			if (rip >= thread->newPages && rip < (thread->newPages + hook->mNewPagesSize))
+			if (rip >= newPages && rip < (newPages + hook->mNewPagesSize))
 			{
+				// Might want to actually acquire the lock here (maybe in
+				// other places as well)
 				while (hook->PeakWriteLock())
 				{
 					Sleep(10);
 				}
 
-				rip = hook->mNewPages + (rip - thread->newPages);
-				thread->newPages = hook->mNewPages;
+				rip = hook->mNewPages + (rip - newPages);
+				hook->SetThreadNewPages(hook->mNewPages);
 				contextRecord->Rip = reinterpret_cast<UINT64>(rip);
 				return EXCEPTION_CONTINUE_EXECUTION;
 			}

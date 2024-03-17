@@ -1,23 +1,30 @@
 #include "hook.h"
 
-void PFHook::NewTranslation(UINT8* originalAddress, UINT32 newOffset)
+void PFHook::InsertTranslation(const PFHook::Translation& translation)
 {
-	Translation* translation = new Translation;
-	translation->originalAddress = originalAddress;
-	translation->newOffset = newOffset;
-	InsertListHead(&mTranslationList, &translation->listEntry);
+	mTranslationMutex.lock();
+	mTranslations.push_back(translation);
+	mTranslationMutex.unlock();
 }
 
-UINT32 PFHook::GetTranslationOffset(UINT8* originalAddress)
+uint32_t PFHook::FindTranslationOffset(uint8_t* originalAddress)
 {
-	for (LIST_ENTRY* entry = mTranslationList.Flink; entry != &mTranslationList; entry = entry->Flink)
+	uint32_t offset = static_cast<uint32_t>(
+		originalAddress - OriginalPageInstructions());
+
+	mTranslationMutex.lock();
+
+	for (Translation& translation : mTranslations)
 	{
-		Translation* translation = CONTAINING_RECORD(entry, Translation, listEntry);
-		if (translation->originalAddress == originalAddress)
-			return translation->newOffset;
+		if (translation.originalAddress == originalAddress)
+		{
+			offset = translation.newOffset;
+			break;
+		}
 	}
 
-	return static_cast<UINT32>(originalAddress - OriginalPageInstructions());
+	mTranslationMutex.unlock();
+	return offset;
 }
 
 bool PFHook::Relocate(const void* buffer, size_t length)
@@ -104,29 +111,45 @@ bool PFHook::PlaceManualReturnAddress(UINT64 returnAddress)
 	return Relocate(instructions, MANUAL_RET_SIZE);
 }
 
-PFHook::Thread* PFHook::FindThread()
+void PFHook::InsertCurrentThread()
 {
-	for (LIST_ENTRY* entry = mThreadList.Flink; entry != &mThreadList; entry = entry->Flink)
-	{
-		Thread* thread = CONTAINING_RECORD(entry, Thread, listEntry);
-		if (thread->threadID == reinterpret_cast<void*>(__readgsqword(0x48)))
-			return thread;
-	}
-
-	return nullptr;
+	mThreadMutex.lock();
+	mThreads.push_back(Thread{ __readgsqword(0x48), mNewPages });
+	mThreadMutex.unlock();
 }
 
-// Use different locks for this list and all others
-PFHook::Thread* PFHook::NewThread()
+uint8_t* PFHook::FindThreadNewPages()
 {
-	Thread* thread = new Thread;
+	uint8_t* newPages = nullptr;
 
-	thread->threadID = reinterpret_cast<void*>(__readgsqword(0x48));
-	thread->newPages = this->mNewPages;
+	mThreadMutex.lock();
 
-	InsertListHead(&mThreadList, &thread->listEntry);
+	for (Thread& thread : mThreads)
+	{
+		if (thread.threadID == __readgsqword(0x48))
+		{
+			newPages = thread.newPages;
+			break;
+		}
+	}
 
-	return thread;
+	mThreadMutex.unlock();
+	return newPages;
+}
+
+void PFHook::SetThreadNewPages(uint8_t* newPages)
+{
+	mThreadMutex.lock();
+	for (Thread& thread : mThreads)
+	{
+		if (thread.threadID == __readgsqword(0x48))
+		{
+			thread.newPages = newPages;
+			break;
+		}
+	}
+
+	mThreadMutex.unlock();
 }
 
 // Address: An address within the original page or the new pages
