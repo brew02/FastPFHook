@@ -152,18 +152,32 @@ void PFHook::SetThreadNewPages(uint8_t* newPages)
 	mThreadMutex.unlock();
 }
 
+std::mutex gHookMutex;
+std::vector<PFHook*> gHooks;
+
+void InsertHook(PFHook* hook)
+{
+	gHookMutex.lock();
+	gHooks.push_back(hook);
+	gHookMutex.unlock();
+}
+
 // Address: An address within the original page or the new pages
 PFHook* FindHook(void* address)
 {
-	for (LIST_ENTRY* entry = gHookList.Flink; entry != &gHookList; entry = entry->Flink)
+	PFHook* hookRet = nullptr;
+	gHookMutex.lock();
+
+	for (PFHook* hook : gHooks)
 	{
-		PFHook* hook = CONTAINING_RECORD(entry, PFHook, listEntry);
 		if ((address >= hook->OriginalPage() && address < hook->OriginalPageEnd()) ||
 			address >= hook->mNewPages && address < hook->NewPagesEnd())
 		{
-			return hook;
+			hookRet = hook;
+			break;
 		}
 	}
 
-	return nullptr;
+	gHookMutex.unlock();
+	return hookRet;
 }

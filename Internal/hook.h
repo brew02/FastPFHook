@@ -39,7 +39,6 @@ private:
 
 public:
 
-	LIST_ENTRY listEntry;
 	UINT8* mNewPages;
 	UINT8* mOriginalAddress;
 	UINT8* mRelocCursor;
@@ -59,12 +58,24 @@ public:
 	uint8_t* FindThreadNewPages();
 	void SetThreadNewPages(uint8_t* newPages);
 
-	PFHook(void* newPages, void* originalAddress, UINT64 newPageSize) :
-		mNewPages{ reinterpret_cast<UINT8*>(newPages) }, mWritingLocked{false},
-		mOriginalAddress{ reinterpret_cast<UINT8*>(originalAddress) }, mNewPagesSize{ newPageSize },
-		listEntry{ nullptr, nullptr }, mPageProtection{ 0 }
+	PFHook(void* originalAddress) :
+		mWritingLocked{false}, mOriginalAddress{ reinterpret_cast<UINT8*>(originalAddress) }, 
+		mNewPagesSize{ INITIAL_HOOK_SIZE }, mPageProtection{ 0 }
 	{
+		// Change this
+		mNewPages = reinterpret_cast<UINT8*>(VirtualAlloc(
+			nullptr, INITIAL_HOOK_SIZE, MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE));
+
+		if (!mNewPages)
+			return;
+
+		memset(mNewPages, 0xCC, mNewPagesSize);
 		mRelocCursor = mNewPages + PAGE_SIZE + BOUNDARY_INSTRUCTION_LENGTH * 2 + JMP_SIZE_ABS;
+	}
+
+	~PFHook()
+	{
+
 	}
 
 	inline void LockWrites()
@@ -137,6 +148,5 @@ public:
 	}
 };
 
-inline LIST_ENTRY gHookList = { nullptr, nullptr };
-
+void InsertHook(PFHook* hook);
 PFHook* FindHook(void* address);

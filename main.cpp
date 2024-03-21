@@ -119,23 +119,17 @@ PFHook* InstallHook(void* address)
 	{
 		if (!InitializePFH())
 			return nullptr;
-
-		InitializeListHead(&gHookList);
 	}
 
 	PFHook* hook = FindHook(address);
 	if (!hook)
 	{
-		void* newPage = VirtualAlloc(nullptr, INITIAL_HOOK_SIZE,
-			MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE);
-
-		if (!newPage)
-			return nullptr;
-
-		memset(newPage, 0xCC, INITIAL_HOOK_SIZE);
-
-		hook = new PFHook(newPage, address, INITIAL_HOOK_SIZE);
-		InsertListHead(&gHookList, &hook->listEntry);
+		hook = new PFHook(address);
+		InsertHook(hook);
+	}
+	else
+	{
+		// Add multiple possible hook addresses or maybe just a reference count
 	}
 
 	// Maybe add a check here (not sure if all 'false' returns are actually bad right now)
