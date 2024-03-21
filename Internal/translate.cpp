@@ -198,6 +198,7 @@ bool TranslateRelativeInstruction(PFHook* hook, Disassembler* disassembler)
 
 		totalLength += instruction->length;
 
+		// must be changed (use breakpoints)
 		if ((disassembler->address + instruction->length) >= hook->OriginalPageEnd() ||
 			totalLength >= JMP_SIZE_32)
 		{
