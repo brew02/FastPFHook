@@ -1,6 +1,5 @@
 #include "translate.h"
 
-// Remove rip and just use disassembler
 // We need to deal with double branches (place breakpoints on them properly)
 // Ex.
 // jcc (2 bytes)
@@ -65,12 +64,6 @@ ZyanStatus PlaceAbsoluteInstruction(PFHook* hook,
 		UINT8 instructionLength = GetInstructionLengthAtAddress(branchAddress);
 		if (!instructionLength)
 			return ZYAN_STATUS_FAILED;
-
-		// Add a new jump for all instructions that leave our page
-		// that are instead redirected to an exit gate.
-		// This exit gate will lock dec byte ptr [rax], where rax contains the threadCount 
-		// before leaving the page as normal.
-		// It may perform other operations in the future as well.
 
 		if (((branchAddress + instructionLength) >= hook->OriginalPage() &&
 			branchAddress < hook->OriginalPageEnd()))

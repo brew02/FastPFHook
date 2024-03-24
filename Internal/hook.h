@@ -58,17 +58,10 @@ public:
 	uint8_t* FindThreadNewPages();
 	void SetThreadNewPages(uint8_t* newPages);
 
-	PFHook(void* originalAddress) :
-		mWritingLocked{false}, mOriginalAddress{ reinterpret_cast<UINT8*>(originalAddress) }, 
-		mNewPagesSize{ INITIAL_HOOK_SIZE }, mPageProtection{ 0 }
+	PFHook(void* newPages, void* originalAddress) :
+		mWritingLocked{ false }, mOriginalAddress{ reinterpret_cast<UINT8*>(originalAddress) },
+		mNewPagesSize{ INITIAL_HOOK_SIZE }, mPageProtection{ 0 }, mNewPages{ reinterpret_cast<uint8_t*>(newPages) }
 	{
-		// Change this
-		mNewPages = reinterpret_cast<UINT8*>(VirtualAlloc(
-			nullptr, INITIAL_HOOK_SIZE, MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE));
-
-		if (!mNewPages)
-			return;
-
 		memset(mNewPages, 0xCC, mNewPagesSize);
 		mRelocCursor = mNewPages + PAGE_SIZE + BOUNDARY_INSTRUCTION_LENGTH * 2 + JMP_SIZE_ABS;
 	}
@@ -78,6 +71,7 @@ public:
 
 	}
 
+	// Place these in parseandtranslatesafe
 	inline void LockWrites()
 	{
 		mWritingLocked = true;
@@ -96,10 +90,6 @@ public:
 	{
 		return mWritingLocked;
 	}
-
-	// Remove some of these function, they are pointless
-	// Add destructor definitions
-	// Add another list that keeps track of all of the originalAddresses for function hooking purposes (i.e. multiple function hooks on the same page)
 
 	__forceinline UINT8* NewPagesEnd()
 	{

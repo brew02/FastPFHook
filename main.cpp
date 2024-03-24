@@ -11,9 +11,8 @@
 
 void* gExceptionHandlerHandle = nullptr;
 
-// More TODOs: Add multi-threading support (locks), split code into different files, 
-// read comment about unconditional branches below (somewhere)
-// Use classes for the Disassembler struct and the HookData struct
+// More TODOs: Add multi-threading support (locks), read comment about unconditional branches below (somewhere)
+// Make the mutexes shareable for better reader performance (some of them)
 
 // Create separate functions for access violations, breakpoints, and single-steps
 long __stdcall ExceptionHandler(EXCEPTION_POINTERS* exceptionInfo)
@@ -48,6 +47,8 @@ long __stdcall ExceptionHandler(EXCEPTION_POINTERS* exceptionInfo)
 			{
 				// Might want to actually acquire the lock here (maybe in
 				// other places as well)
+				// This won't really be necessary if we just suspend threads
+				// when parsing and translating (make that change)
 				while (hook->PeakWriteLock())
 				{
 					Sleep(10);
@@ -124,7 +125,13 @@ PFHook* InstallHook(void* address)
 	PFHook* hook = FindHook(address);
 	if (!hook)
 	{
-		hook = new PFHook(address);
+		void* newPages = VirtualAlloc(nullptr, INITIAL_HOOK_SIZE, 
+			MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE);
+
+		if (!newPages)
+			return nullptr;
+
+		hook = new PFHook(newPages, address);
 		InsertHook(hook);
 	}
 	else
