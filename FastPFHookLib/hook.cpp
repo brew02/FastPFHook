@@ -1,23 +1,30 @@
 #include "hook.h"
 
-void PFHook::NewTranslation(UINT8* originalAddress, UINT32 newOffset)
+void PFHook::InsertTranslation(const PFHook::Translation& translation)
 {
-	Translation* translation = new Translation;
-	translation->originalAddress = originalAddress;
-	translation->newOffset = newOffset;
-	InsertListHead(&mTranslationList, &translation->listEntry);
+	mTranslationMutex.lock();
+	mTranslations.push_back(translation);
+	mTranslationMutex.unlock();
 }
 
-UINT32 PFHook::GetTranslationOffset(UINT8* originalAddress)
+uint32_t PFHook::FindTranslationOffset(uint8_t* originalAddress)
 {
-	for (LIST_ENTRY* entry = mTranslationList.Flink; entry != &mTranslationList; entry = entry->Flink)
+	uint32_t offset = static_cast<uint32_t>(
+		originalAddress - OriginalPageInstructions());
+
+	mTranslationMutex.lock();
+
+	for (Translation& translation : mTranslations)
 	{
-		Translation* translation = CONTAINING_RECORD(entry, Translation, listEntry);
-		if (translation->originalAddress == originalAddress)
-			return translation->newOffset;
+		if (translation.newOffset == offset)
+		{
+			offset = translation.relocOffset;
+			break;
+		}
 	}
 
-	return static_cast<UINT32>(originalAddress - OriginalPageInstructions());
+	mTranslationMutex.unlock();
+	return offset;
 }
 
 bool PFHook::Relocate(const void* buffer, size_t length)
@@ -30,7 +37,7 @@ bool PFHook::Relocate(const void* buffer, size_t length)
 		UINT8* oldNewPages = mNewPages;
 
 		mNewPages = reinterpret_cast<UINT8*>(VirtualAlloc(nullptr,
-			mNewPagesSize, MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE));
+			mNewPagesSize, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
 
 		if (!mNewPages)
 			return false;
@@ -102,4 +109,75 @@ bool PFHook::PlaceManualReturnAddress(UINT64 returnAddress)
 	*reinterpret_cast<UINT32*>(&instructions[9]) = static_cast<UINT32>(returnAddress >> 32);
 
 	return Relocate(instructions, MANUAL_RET_SIZE);
+}
+
+void PFHook::InsertCurrentThread()
+{
+	mThreadMutex.lock();
+	mThreads.push_back(Thread{ __readgsqword(0x48), mNewPages });
+	mThreadMutex.unlock();
+}
+
+uint8_t* PFHook::FindThreadNewPages()
+{
+	uint8_t* newPages = nullptr;
+
+	mThreadMutex.lock();
+
+	for (Thread& thread : mThreads)
+	{
+		if (thread.threadID == __readgsqword(0x48))
+		{
+			newPages = thread.newPages;
+			break;
+		}
+	}
+
+	mThreadMutex.unlock();
+	return newPages;
+}
+
+void PFHook::SetThreadNewPages(uint8_t* newPages)
+{
+	mThreadMutex.lock();
+	for (Thread& thread : mThreads)
+	{
+		if (thread.threadID == __readgsqword(0x48))
+		{
+			thread.newPages = newPages;
+			break;
+		}
+	}
+
+	mThreadMutex.unlock();
+}
+
+std::mutex gHookMutex;
+std::vector<PFHook*> gHooks;
+
+void InsertHook(PFHook* hook)
+{
+	gHookMutex.lock();
+	gHooks.push_back(hook);
+	gHookMutex.unlock();
+}
+
+// Address: An address within the original page or the new pages
+PFHook* FindHook(void* address)
+{
+	PFHook* hookRet = nullptr;
+	gHookMutex.lock();
+
+	for (PFHook* hook : gHooks)
+	{
+		if ((address >= hook->OriginalPage() && address < hook->OriginalPageEnd()) ||
+			address >= hook->mNewPages && address < hook->NewPagesEnd())
+		{
+			hookRet = hook;
+			break;
+		}
+	}
+
+	gHookMutex.unlock();
+	return hookRet;
 }

@@ -18,6 +18,20 @@
       <Platform>x64</Platform>
     </ProjectConfiguration>
   </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="..\Includes\FastPFHook.h" />
+    <ClInclude Include="common.h" />
+    <ClInclude Include="hook.h" />
+    <ClInclude Include="translate.h" />
+    <ClInclude Include="util.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="hook.cpp" />
+    <ClCompile Include="lock.cpp" />
+    <ClCompile Include="FastPFHook.cpp" />
+    <ClCompile Include="translate.cpp" />
+    <ClCompile Include="util.cpp" />
+  </ItemGroup>
   <PropertyGroup Label="Globals">
     <VCProjectVersion>17.0</VCProjectVersion>
     <Keyword>Win32Proj</Keyword>
@@ -40,7 +54,7 @@
     <CharacterSet>Unicode</CharacterSet>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
-    <ConfigurationType>Application</ConfigurationType>
+    <ConfigurationType>StaticLibrary</ConfigurationType>
     <UseDebugLibraries>true</UseDebugLibraries>
     <PlatformToolset>v143</PlatformToolset>
     <CharacterSet>Unicode</CharacterSet>
@@ -75,8 +89,9 @@
     <LibraryPath>C:\source\active\FastPFHook\zydis;$(LibraryPath)</LibraryPath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-    <IncludePath>$(ProjectDir)zydis;$(IncludePath)</IncludePath>
-    <LibraryPath>$(ProjectDir)zydis;$(LibraryPath)</LibraryPath>
+    <IncludePath>$(SolutionDir)Dependencies\Zydis;$(IncludePath)</IncludePath>
+    <LibraryPath>$(SolutionDir)Dependencies\Zydis;$(LibraryPath)</LibraryPath>
+    <OutDir>$(SolutionDir)Output\$(Configuration)\</OutDir>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <ClCompile>
@@ -112,6 +127,7 @@
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>_DEBUG;_CONSOLE;ZYDIS_STATIC_BUILD;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
+      <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -136,16 +152,6 @@
       <AdditionalDependencies>Zydis.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
-  <ItemGroup>
-    <ClCompile Include="Internal\hook.cpp" />
-    <ClCompile Include="Internal\translate.cpp" />
-    <ClCompile Include="main.cpp" />
-  </ItemGroup>
-  <ItemGroup>
-    <ClInclude Include="Internal\common.h" />
-    <ClInclude Include="Internal\hook.h" />
-    <ClInclude Include="Internal\translate.h" />
-  </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>
