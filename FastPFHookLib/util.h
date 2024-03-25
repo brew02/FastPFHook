@@ -16,7 +16,7 @@ ZyanStatus InitializeDisassembler(Disassembler* disassembler,
 	ZydisMachineMode machineMode, ZydisStackWidth stackWidth, void* address);
 
 ZydisRegister GetUnusedGPRegister(ZydisDecodedInstruction* instruction, ZydisDecodedOperand* operands);
-UINT8* GetBranchAddress(Disassembler* disassembler, UINT8* newRIP, ZydisOperandType* type);
+UINT8* GetBranchAddress(Disassembler* disassembler, ZydisOperandType* type);
 UINT8 GetInstructionLengthAtAddress(void* address);
 
 void PlaceRelativeJump(void* destination, INT32 offset);

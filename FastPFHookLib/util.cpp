@@ -64,7 +64,7 @@ ZydisRegister GetUnusedGPRegister(ZydisDecodedInstruction* instruction, ZydisDec
 
 // Change this so that we don't supply our own RIP (just use the originalRIP)
 // We need to handle the two other cases properly as well
-UINT8* GetBranchAddress(Disassembler* disassembler, UINT8* newRIP, ZydisOperandType* type)
+UINT8* GetBranchAddress(Disassembler* disassembler, ZydisOperandType* type)
 {
 	UINT8* originalRIP = disassembler->address + disassembler->instruction.length;
 
@@ -75,7 +75,7 @@ UINT8* GetBranchAddress(Disassembler* disassembler, UINT8* newRIP, ZydisOperandT
 			operand->imm.is_relative)
 		{
 			*type = operand->type;
-			return newRIP + operand->imm.value.s;
+			return originalRIP + operand->imm.value.s;
 		}
 		else if (operand->type == ZYDIS_OPERAND_TYPE_MEMORY &&
 			operand->mem.disp.has_displacement)

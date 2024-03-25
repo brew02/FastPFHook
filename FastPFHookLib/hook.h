@@ -22,8 +22,8 @@ public:
 
 	struct Translation
 	{
-		UINT8* originalAddress;
 		UINT32 newOffset;
+		uint32_t relocOffset;
 	};
 
 private:

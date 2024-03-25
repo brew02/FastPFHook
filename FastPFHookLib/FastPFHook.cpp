@@ -4,8 +4,9 @@
 
 #include <Zydis/Zydis.h>
 
-#include "Internal/hook.h"
-#include "Internal/translate.h"
+#include "..\Includes\FastPFHook.h"
+#include "hook.h"
+#include "translate.h"
 
 // Add credits to MinHook author and SMAP Btbd
 
@@ -114,13 +115,11 @@ void UninitializePFH()
 	RemoveVectoredExceptionHandler(gExceptionHandlerHandle);
 }
 
-PFHook* InstallHook(void* address)
+bool InstallHook(void* address)
 {
 	if (!gExceptionHandlerHandle)
-	{
 		if (!InitializePFH())
-			return nullptr;
-	}
+			return false;
 
 	PFHook* hook = FindHook(address);
 	if (!hook)
@@ -129,7 +128,10 @@ PFHook* InstallHook(void* address)
 			MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE);
 
 		if (!newPages)
-			return nullptr;
+		{
+			UninitializePFH();
+			return false;
+		}
 
 		hook = new PFHook(newPages, address);
 		InsertHook(hook);
@@ -142,30 +144,14 @@ PFHook* InstallHook(void* address)
 	// Maybe add a check here (not sure if all 'false' returns are actually bad right now)
 	ParseAndTranslateSafe(hook, address, false);
 
-	return hook;
+	DWORD oldProtect = 0;
+	VirtualProtect(&MessageBoxA, 1, PAGE_READWRITE, &oldProtect);
+
+	return true;
 }
 
 void RemoveHook(void* address)
 {
 	UNREFERENCED_PARAMETER(address);
 	// Finish this later
-}
-
-int main()
-{
-	InstallHook(&MessageBoxA);
-
-	DWORD oldProtect = 0;
-	VirtualProtect(&MessageBoxA, 1, PAGE_READWRITE, &oldProtect);
-
-	MessageBoxA(nullptr, "Test", nullptr, MB_ICONWARNING);
-
-	VirtualProtect(&MessageBoxA, 1, oldProtect, &oldProtect);
-
-	//UINT8* messageBoxA = tempPFHook->OriginalToNew(&MessageBoxA);
-	//((decltype(MessageBoxA)*)(messageBoxA))(nullptr, "Test", nullptr, MB_ICONWARNING);
-
-	UninitializePFH();
-
-	return 0;
 }

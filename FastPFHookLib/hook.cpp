@@ -16,9 +16,9 @@ uint32_t PFHook::FindTranslationOffset(uint8_t* originalAddress)
 
 	for (Translation& translation : mTranslations)
 	{
-		if (translation.originalAddress == originalAddress)
+		if (translation.newOffset == offset)
 		{
-			offset = translation.newOffset;
+			offset = translation.relocOffset;
 			break;
 		}
 	}
