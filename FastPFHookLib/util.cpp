@@ -133,7 +133,7 @@ void PlaceAbsoluteJump(void* destination, UINT64 address)
 
 void PlaceManualReturnAddress(void* destination, UINT64 returnAddress)
 {
-	// push imm
+	// push imm32
 	// mov dword ptr [rsp, 4], imm
 	UINT8 instructions[MANUAL_RET_SIZE] =
 	{

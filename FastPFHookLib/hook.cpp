@@ -162,22 +162,20 @@ void InsertHook(PFHook* hook)
 	gHookMutex.unlock();
 }
 
-// Address: An address within the original page or the new pages
+// Address: An address within the original page
 PFHook* FindHook(void* address)
 {
-	PFHook* hookRet = nullptr;
-	gHookMutex.lock();
+	PFHook* ret = nullptr;
 
 	for (PFHook* hook : gHooks)
 	{
-		if ((address >= hook->OriginalPage() && address < hook->OriginalPageEnd()) ||
-			address >= hook->mNewPages && address < hook->NewPagesEnd())
+		if ((address >= hook->OriginalPage() && 
+			address < hook->OriginalPageEnd()))
 		{
-			hookRet = hook;
+			ret = hook;
 			break;
 		}
 	}
 
-	gHookMutex.unlock();
-	return hookRet;
+	return ret;
 }

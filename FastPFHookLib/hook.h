@@ -71,20 +71,12 @@ public:
 
 	}
 
-	// Place these in parseandtranslatesafe
-	inline void LockWrites()
+	bool Init()
 	{
-		mWritingLocked = true;
-		mWriteMutex.lock();
-		VirtualProtect(mNewPages, mNewPagesSize, PAGE_READWRITE, &mPageProtection);
+
 	}
 
-	inline void UnlockWrites()
-	{
-		VirtualProtect(mNewPages, mNewPagesSize, mPageProtection, &mPageProtection);
-		mWriteMutex.unlock();
-		mWritingLocked = false;
-	}
+	// Place these in parseandtranslatesafe
 
 	__forceinline volatile long PeakWriteLock()
 	{

@@ -34,9 +34,6 @@
     <ClCompile Include="hook.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="lock.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="FastPFHook.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>

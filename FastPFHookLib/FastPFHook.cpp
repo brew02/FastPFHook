@@ -144,9 +144,6 @@ bool InstallHook(void* address)
 	// Maybe add a check here (not sure if all 'false' returns are actually bad right now)
 	ParseAndTranslateSafe(hook, address, false);
 
-	DWORD oldProtect = 0;
-	VirtualProtect(&MessageBoxA, 1, PAGE_READWRITE, &oldProtect);
-
 	return true;
 }
 
