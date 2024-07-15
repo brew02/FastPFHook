@@ -2,17 +2,13 @@
 
 void PFHook::InsertTranslation(const PFHook::Translation& translation)
 {
-	mTranslationMutex.lock();
 	mTranslations.push_back(translation);
-	mTranslationMutex.unlock();
 }
 
 uint32_t PFHook::FindTranslationOffset(uint8_t* originalAddress)
 {
 	uint32_t offset = static_cast<uint32_t>(
 		originalAddress - OriginalPageInstructions());
-
-	mTranslationMutex.lock();
 
 	for (Translation& translation : mTranslations)
 	{
@@ -23,7 +19,6 @@ uint32_t PFHook::FindTranslationOffset(uint8_t* originalAddress)
 		}
 	}
 
-	mTranslationMutex.unlock();
 	return offset;
 }
 
@@ -113,16 +108,12 @@ bool PFHook::PlaceManualReturnAddress(UINT64 returnAddress)
 
 void PFHook::InsertCurrentThread()
 {
-	mThreadMutex.lock();
 	mThreads.push_back(Thread{ __readgsqword(0x48), mNewPages });
-	mThreadMutex.unlock();
 }
 
 uint8_t* PFHook::FindThreadNewPages()
 {
 	uint8_t* newPages = nullptr;
-
-	mThreadMutex.lock();
 
 	for (Thread& thread : mThreads)
 	{
@@ -133,13 +124,11 @@ uint8_t* PFHook::FindThreadNewPages()
 		}
 	}
 
-	mThreadMutex.unlock();
 	return newPages;
 }
 
 void PFHook::SetThreadNewPages(uint8_t* newPages)
 {
-	mThreadMutex.lock();
 	for (Thread& thread : mThreads)
 	{
 		if (thread.threadID == __readgsqword(0x48))
@@ -148,25 +137,19 @@ void PFHook::SetThreadNewPages(uint8_t* newPages)
 			break;
 		}
 	}
-
-	mThreadMutex.unlock();
 }
 
-std::mutex gHookMutex;
 std::vector<PFHook*> gHooks;
 
 void InsertHook(PFHook* hook)
 {
-	gHookMutex.lock();
 	gHooks.push_back(hook);
-	gHookMutex.unlock();
 }
 
 // Address: An address within the original page or the new pages
 PFHook* FindHook(void* address)
 {
 	PFHook* hookRet = nullptr;
-	gHookMutex.lock();
 
 	for (PFHook* hook : gHooks)
 	{
@@ -178,6 +161,5 @@ PFHook* FindHook(void* address)
 		}
 	}
 
-	gHookMutex.unlock();
 	return hookRet;
 }

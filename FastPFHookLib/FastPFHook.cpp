@@ -50,10 +50,6 @@ long __stdcall ExceptionHandler(EXCEPTION_POINTERS* exceptionInfo)
 				// other places as well)
 				// This won't really be necessary if we just suspend threads
 				// when parsing and translating (make that change)
-				while (hook->PeakWriteLock())
-				{
-					Sleep(10);
-				}
 
 				rip = hook->mNewPages + (rip - newPages);
 				hook->SetThreadNewPages(hook->mNewPages);

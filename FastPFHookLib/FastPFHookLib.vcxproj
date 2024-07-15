@@ -27,7 +27,6 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="hook.cpp" />
-    <ClCompile Include="lock.cpp" />
     <ClCompile Include="FastPFHook.cpp" />
     <ClCompile Include="translate.cpp" />
     <ClCompile Include="util.cpp" />

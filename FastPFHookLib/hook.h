@@ -28,13 +28,9 @@ public:
 
 private:
 	std::vector<Translation> mTranslations;
-	std::mutex mTranslationMutex;
 
 	std::vector<Thread> mThreads;
-	std::mutex mThreadMutex;
 
-	bool mWritingLocked;
-	std::mutex mWriteMutex;
 	ULONG mPageProtection;
 
 public:
@@ -59,7 +55,7 @@ public:
 	void SetThreadNewPages(uint8_t* newPages);
 
 	PFHook(void* newPages, void* originalAddress) :
-		mWritingLocked{ false }, mOriginalAddress{ reinterpret_cast<UINT8*>(originalAddress) },
+		mOriginalAddress{ reinterpret_cast<UINT8*>(originalAddress) },
 		mNewPagesSize{ INITIAL_HOOK_SIZE }, mPageProtection{ 0 }, mNewPages{ reinterpret_cast<uint8_t*>(newPages) }
 	{
 		memset(mNewPages, 0xCC, mNewPagesSize);
@@ -69,26 +65,6 @@ public:
 	~PFHook()
 	{
 
-	}
-
-	// Place these in parseandtranslatesafe
-	inline void LockWrites()
-	{
-		mWritingLocked = true;
-		mWriteMutex.lock();
-		VirtualProtect(mNewPages, mNewPagesSize, PAGE_READWRITE, &mPageProtection);
-	}
-
-	inline void UnlockWrites()
-	{
-		VirtualProtect(mNewPages, mNewPagesSize, mPageProtection, &mPageProtection);
-		mWriteMutex.unlock();
-		mWritingLocked = false;
-	}
-
-	__forceinline volatile long PeakWriteLock()
-	{
-		return mWritingLocked;
 	}
 
 	__forceinline UINT8* NewPagesEnd()
