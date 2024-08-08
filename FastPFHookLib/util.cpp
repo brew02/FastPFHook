@@ -32,7 +32,7 @@ ZydisRegister GetUnusedGPRegister(ZydisDecodedInstruction* instruction, ZydisDec
 		ZYDIS_REGISTER_R12, ZYDIS_REGISTER_R13, ZYDIS_REGISTER_R14, ZYDIS_REGISTER_R15
 	};
 
-	for (UINT8 i = 0; i < instruction->operand_count_visible; i++)
+	for (UINT8 i = 0; i < instruction->operand_count; i++)
 	{
 		ZydisDecodedOperand* operand = &operands[i];
 		ZydisRegister reg1 = ZYDIS_REGISTER_INVALID;
@@ -98,8 +98,10 @@ UINT8 GetInstructionLengthAtAddress(void* address)
 		return 0;
 	}
 
-	if (ZYAN_FAILED(ZydisDecoderDecodeInstruction(&disassembler.decoder, nullptr,
-		address, ZYDIS_MAX_INSTRUCTION_LENGTH, &disassembler.instruction)))
+	if (ZYAN_FAILED(ZydisDecoderDecodeInstruction(
+		&disassembler.decoder, nullptr,
+		address, ZYDIS_MAX_INSTRUCTION_LENGTH, 
+		&disassembler.instruction)))
 	{
 		return 0;
 	}

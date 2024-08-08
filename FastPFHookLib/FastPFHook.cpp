@@ -14,6 +14,12 @@ void* gExceptionHandlerHandle = nullptr;
 
 // More TODOs: Add multi-threading support (locks), read comment about unconditional branches below (somewhere)
 // Make the mutexes shareable for better reader performance (some of them)
+// Add exception forwarding support
+
+// Future project: read interceptor (use conditional movs instead of branches for performance purposes)
+// Test the performance though
+
+// Another thing: looking into how std::vector works with multiple threads (specifically dynamic array resizing)
 
 // Create separate functions for access violations, breakpoints, and single-steps
 long __stdcall ExceptionHandler(EXCEPTION_POINTERS* exceptionInfo)
@@ -125,6 +131,7 @@ bool InstallHook(void* address)
 
 		if (!newPages)
 		{
+			// Delete hooks and stuff as well
 			UninitializePFH();
 			return false;
 		}
@@ -141,7 +148,7 @@ bool InstallHook(void* address)
 	ParseAndTranslateSafe(hook, address, false);
 
 	DWORD oldProtect = 0;
-	VirtualProtect(&MessageBoxA, 1, PAGE_READWRITE, &oldProtect);
+	VirtualProtect(address, 1, PAGE_READWRITE, &oldProtect);
 
 	return true;
 }
