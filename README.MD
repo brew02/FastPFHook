@@ -7,8 +7,3 @@ FastPFHook is work-in-progress, proof-of-concept project that aims to demonstrat
 
 * Multi-threading
 * Handling Certain Assembly Instructions
-
-## Credits
-
-* [TsudaKageyu - minhook](https://github.com/TsudaKageyu/minhook/)
-* [btbd - smap](https://github.com/btbd/smap)
